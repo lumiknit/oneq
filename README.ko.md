@@ -41,7 +41,7 @@ cargo install --git https://github.com/lumiknit/oneq
 입출력 시 `--from` (`-F`) 와 `--to` (`-T`) 로 입력을 받을 수 있으며 아래와 같은 포맷이 지원됩니다.
 
 | Name | Description | Parser? | Serializer? (Support compact?) | Doc. Separator |
-|-|-|-|-|
+|-|-|-|-|-|
 | json | (Default) JSON (RFC8259) | Y | Y (Y) | *any (2)* |
 | cbor | CBOR (RFC 8949) | Y | Y (binary; output options ignored) | none |
 | json5 | JSON5 | Y | alias of `json` | *any (2)* |

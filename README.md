@@ -40,7 +40,7 @@ cargo install --git https://github.com/lumiknit/oneq
 In addition to JSON, `1q` can read and write several other formats. Specify the input and output formats with `--from` (`-F`) and `--to` (`-T`).
 
 | Name | Description | Parser? | Serializer? (Supports compact?) | Document separator |
-|-|-|-|-|
+|-|-|-|-|-|
 | json | (Default) JSON (RFC 8259) | Y | Y (Y) | *any (2)* |
 | cbor | CBOR (RFC 8949) | Y | Y (binary; output options ignored) | none |
 | json5 | JSON5 | Y | alias of `json` | *any (2)* |
