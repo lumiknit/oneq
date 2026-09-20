@@ -1,0 +1,29 @@
+{
+  "compatibility_target": "jq 1.8.1 with documented Rust regex exceptions",
+  "oneq_regex_backend": "Rust regex crate (Cargo.lock)",
+  "intentional_regex_differences": [
+    "Unsupported Rust regex syntax, including lookaround and backreferences, produces an explicit error",
+    "No Oniguruma dependency or fallback in oneq"
+  ],
+  "release_oracle": {
+    "version_stdout": "jq-1.8.1",
+    "source_revision": "4467af7068b1bcd7f882defff6e7ea674c5357f4",
+    "release_url": "https://github.com/jqlang/jq/releases/tag/jq-1.8.1",
+    "source_url": "https://github.com/jqlang/jq/commit/4467af7068b1bcd7f882defff6e7ea674c5357f4",
+    "download_url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-arm64",
+    "checksum_url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/sha256sum.txt",
+    "sha256": "6bc62f25981328edd3cfcfe6fe51b073f2d7e7710d7ef7fcdac28d4e384fc3d4",
+    "platform": "Linux aarch64",
+    "build_configuration": "--host=aarch64-linux-gnu --disable-docs --with-oniguruma=builtin --enable-static --enable-all-static 'CFLAGS=-O2 -pthread -fstack-protector-all' host_alias=aarch64-linux-gnu CC=aarch64-linux-gnu-gcc LDFLAGS=-s CPP=aarch64-linux-gnu-cpp",
+    "have_decnum": true,
+    "have_literal_numbers": true,
+    "regex_backend": "bundled Oniguruma from the pinned jq release; reference only",
+    "regex_backreference_probe": true
+  },
+  "system_oracle": {
+    "executable": "/usr/bin/jq",
+    "version_stdout": "jq-1.8.2",
+    "suitable_for_release_gate": false
+  },
+  "fixture_environment": { "LC_ALL": "C", "TZ": "UTC" }
+}

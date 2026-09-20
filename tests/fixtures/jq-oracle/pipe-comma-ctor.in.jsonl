@@ -1,0 +1,5 @@
+{"user": "alice", "title": "Engineer", "age": 30, "tags": ["a","b"]}
+{"user": "", "title": null, "age": 0, "tags": []}
+{"user": "밥", "title": "매니저", "age": 45, "tags": ["x"]}
+{"user": "carol", "title": "Lead", "age": -1, "tags": ["p","q","r"]}
+{"user": "dan", "title": "VP", "age": 99, "tags": [1,2,3]}

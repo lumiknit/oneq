@@ -1,0 +1,56 @@
+# Deployment catalog: anchors, merge precedence, multiline text and scalar types.
+%YAML 1.2
+---
+metadata:
+  name: "서울 services"
+  released: 2026-09-10
+  description: |
+    First line
+    --- is text inside this block
+  labels: {environment: production, "true": "yes"}
+defaults: &defaults
+  enabled: true
+  replicas: 2
+  limits: &limits {cpu: 0.5, memory: 512}
+  ports: [8080, 8443]
+  annotations: {}
+services:
+  - <<: *defaults
+    name: api
+    replicas: 4
+    limits: {<<: *limits, memory: 1024}
+    routes:
+      - {path: /health, methods: [GET], auth: false}
+      - {path: /users, methods: [GET, POST], auth: true}
+  - name: worker
+    <<: [*defaults, {replicas: 99, queue: jobs}]
+    ports: []
+    schedule: null
+numbers:
+  octal: 0o755
+  hex: 0xFF
+  decimal: 012
+  huge: 123456789012345678901234567890
+  scientific: 1.25e3
+strings: [yes, on, "false", 'null', !!str 123]
+# A second document resets the anchor namespace.
+---
+kind: report
+result: &result
+  successful: true
+  errors: []
+  details: {"a.b": [1, [2, 3]], "": {"<<": literal}}
+copy: *result
+folded: >-
+  a long
+  description
+...
+# Explicit end still waits for the next start marker or EOF.
+---
+[]
+---
+null
+---
+- name: final
+  result: {}
+- [true, false, null, "---"]

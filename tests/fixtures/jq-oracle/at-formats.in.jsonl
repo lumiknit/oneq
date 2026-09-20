@@ -1,0 +1,5 @@
+{"s": "hello", "row": ["a", 1, true, null], "url": "a b/c?d=1"}
+{"s": "", "row": [], "url": ""}
+{"s": "<b>tag & \"quote\"</b>", "row": ["x,y", "z\"q"], "url": "한글 テスト"}
+{"s": "line1\nline2\ttab", "row": [1,2,3], "url": "a+b=c&d"}
+{"s": "special$`'\\chars", "row": [null, false, 3.14], "url": "/path/with space"}

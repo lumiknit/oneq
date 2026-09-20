@@ -1,0 +1,5 @@
+{"a": true, "b": false, "n": 5, "x": null}
+{"a": false, "b": false, "n": 0, "x": null}
+{"a": true, "b": true, "n": -1, "x": "present"}
+{"a": null, "b": true, "n": 100, "x": 0}
+{"a": false, "b": null, "n": null, "x": []}

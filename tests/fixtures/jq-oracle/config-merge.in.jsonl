@@ -1,0 +1,5 @@
+{"overrides": {"timeout_ms": 2000, "limits": {"mem_mb": 2048}, "tags": ["prod"]}, "env": "prod"}
+{"timeout_ms": 500, "retries": 5}
+{"overrides": {"timeout_ms": -10}, "env": "broken"}
+{}
+{"overrides": {"limits": {"cpu": 4, "mem_mb": 900}}, "env": "staging"}

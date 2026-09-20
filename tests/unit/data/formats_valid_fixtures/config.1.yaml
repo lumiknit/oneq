@@ -1,0 +1,6 @@
+---
+settings: &s {retries: 5, timeout:   30}
+labels: [ x , y , z ]
+owner: "lumiknit"
+count: 3
+active: true

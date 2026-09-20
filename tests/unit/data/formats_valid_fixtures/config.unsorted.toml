@@ -1,0 +1,8 @@
+owner = "lumiknit"
+labels = ["x", "y", "z"]
+count = 3
+active = true
+
+[settings]
+timeout = 30
+retries = 5

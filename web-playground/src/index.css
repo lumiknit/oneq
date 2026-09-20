@@ -1,0 +1,325 @@
+@import '@picocss/pico/css/pico.min.css';
+
+:root {
+  --pico-spacing: 0.4rem;
+  --pico-form-element-spacing-vertical: 0.3rem;
+  --pico-form-element-spacing-horizontal: 0.5rem;
+  --pico-typography-spacing-vertical: 0.5rem;
+  --ansi-black: #111827;
+  --ansi-red: #b42318;
+  --ansi-green: #18794e;
+  --ansi-yellow: #8d5f00;
+  --ansi-blue: #175cd3;
+  --ansi-magenta: #9e2a8f;
+  --ansi-cyan: #087f8c;
+  --ansi-white: #667085;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ansi-black: #f2f4f7;
+    --ansi-red: #f97066;
+    --ansi-green: #6ce9a6;
+    --ansi-yellow: #fdb022;
+    --ansi-blue: #84adff;
+    --ansi-magenta: #e9a8ff;
+    --ansi-cyan: #67e8f9;
+    --ansi-white: #d0d5dd;
+  }
+}
+
+body {
+  min-width: 320px;
+}
+main.container {
+  padding-top: 1.25rem;
+}
+main {
+  max-width: 1440px;
+}
+
+input,
+textarea,
+pre,
+code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: calc(var(--pico-spacing) * 2);
+}
+.page-header p {
+  margin: 0;
+  color: var(--pico-muted-color);
+}
+.repository-links {
+  display: flex;
+  gap: calc(var(--pico-spacing) * 1.5);
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+}
+.status {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.status.running {
+  color: var(--pico-primary);
+  border-color: var(--pico-primary);
+}
+.build-configuration {
+  margin-bottom: calc(var(--pico-spacing) * 2);
+}
+.build-configuration summary {
+  cursor: pointer;
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+}
+.build-configuration pre {
+  min-height: 0;
+  max-height: none;
+  margin-top: 0.4rem;
+}
+
+.options-field {
+  margin-bottom: var(--pico-spacing);
+}
+.options-field > span {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.cli-option {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  overflow: hidden;
+}
+.cli-option-tabs {
+  margin-bottom: 0;
+}
+.cli-option-tabs button {
+  margin: 0;
+  font-size: 0.8rem;
+  border-radius: 0;
+}
+.cli-option > input[type='text'] {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+.cli-option-ui {
+  padding: var(--pico-spacing);
+}
+.cli-option-row {
+  border: 0;
+  margin: 0 0 var(--pico-spacing) 0;
+  padding: 0;
+}
+.cli-option-row legend {
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--pico-muted-color);
+}
+.cli-option-row label span {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+.cli-option-row select,
+.cli-option-row input {
+  font-size: 0.8rem;
+}
+.cli-option-check {
+  font-size: 0.8rem;
+}
+.cli-option-flags {
+  font-size: 0.8rem;
+  margin-bottom: var(--pico-spacing);
+}
+.cli-option-extra span {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+.cli-option-extra input {
+  margin: 0;
+}
+
+.editors {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--pico-spacing);
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  overflow: hidden;
+}
+.panel > span,
+.panel h2,
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pico-spacing);
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--pico-card-sectioning-background-color);
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.format-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.format-controls select,
+.format-controls button {
+  width: auto;
+  margin: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+textarea,
+pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  min-height: 260px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+.outputs {
+  display: block;
+}
+.output-panel {
+  width: 100%;
+}
+.output {
+  min-height: 260px;
+  max-height: 480px;
+  overflow: auto;
+  padding: 0.6rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.output span {
+  white-space: pre-wrap;
+}
+.stderr-text {
+  color: var(--pico-del-color);
+  text-decoration: underline;
+  text-decoration-style: wavy;
+}
+.ansi-black {
+  color: var(--ansi-black);
+}
+.ansi-red {
+  color: var(--ansi-red);
+}
+.ansi-green {
+  color: var(--ansi-green);
+}
+.ansi-yellow {
+  color: var(--ansi-yellow);
+}
+.ansi-blue {
+  color: var(--ansi-blue);
+}
+.ansi-magenta {
+  color: var(--ansi-magenta);
+}
+.ansi-cyan {
+  color: var(--ansi-cyan);
+}
+.ansi-white {
+  color: var(--ansi-white);
+}
+.ansi-bold {
+  font-weight: 700;
+}
+.ansi-italic {
+  font-style: italic;
+}
+.output-boundary {
+  display: block;
+}
+.output-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+.output-actions button {
+  width: auto;
+  margin: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+}
+.file-action {
+  font-size: inherit !important;
+}
+.file-action button {
+  margin: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+}
+textarea {
+  padding: 0.6rem;
+  resize: vertical;
+}
+.editors textarea {
+  font-size: 16px;
+}
+pre {
+  padding: 0.6rem;
+  max-height: 480px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pico-spacing);
+  margin: var(--pico-spacing) 0;
+}
+.actions button {
+  width: auto;
+  margin: 0;
+}
+.actions > span {
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+}
+.actions > span:last-child {
+  margin-left: auto;
+}
+
+.stderr h2 {
+  color: var(--pico-del-color);
+}
+.stderr pre {
+  color: var(--pico-del-color);
+}
+
+@media (max-width: 720px) {
+  .editors {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  textarea {
+    min-height: 200px;
+  }
+}

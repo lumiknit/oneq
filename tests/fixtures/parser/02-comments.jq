@@ -1,0 +1,3 @@
+# heading
+.foo # trailing
+| .bar

@@ -1,0 +1,5 @@
+{"level": "info", "msg": "request served", "duration_ms": 42, "user": {"id": 1, "name": "ann"}}
+{"level": "error", "message": "upstream timeout", "elapsed": 650, "user": ["u2", "bob"]}
+{"level": "warn", "msg": "sparse entry"}
+{"level": "bogus", "msg": "weird level", "duration_ms": 150, "user": {"id": 3, "name": "cleo"}}
+{"level": "info", "message": "batch job", "elapsed": 5, "user": ["u4", "dee"]}

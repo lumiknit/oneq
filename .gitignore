@@ -1,0 +1,6 @@
+/.*
+!/.gitignore
+/target
+/jq-*
+/web/pkg/
+.DS_Store

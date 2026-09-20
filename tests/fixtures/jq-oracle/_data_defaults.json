@@ -1,0 +1,1 @@
+{"timeout_ms": 1000, "retries": 3, "limits": {"cpu": 1, "mem_mb": 512}, "tags": ["base"]}

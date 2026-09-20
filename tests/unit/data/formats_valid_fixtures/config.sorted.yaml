@@ -1,0 +1,10 @@
+active: true
+count: 3
+labels:
+- x
+- y
+- z
+owner: lumiknit
+settings:
+  retries: 5
+  timeout: 30

@@ -1,0 +1,20 @@
+{
+  to_entries: ({a:1,b:2} | to_entries),
+  from_entries: ([{key:"a",value:1}] | from_entries),
+  with_entries: ({a:1} | with_entries(.value += 1)),
+  path: (path(.a[0].b)),
+  paths: ({a:[1]} | [paths]),
+  paths_filter: ({a:1,b:"x"} | [paths(numbers)]),
+  getpath: ({a:{b:2}} | getpath(["a","b"])),
+  setpath: ({} | setpath(["a","b"]; 2)),
+  del: ({a:1,b:2} | del(.a)),
+  delpaths: ({a:{b:1},x:2} | delpaths([["a","b"]])),
+  pick: ({a:1,b:2} | pick(.a)),
+  map: ([1,2,3] | map(.+1)),
+  map_values: ({a:1,b:2} | map_values(.+1)),
+  contains: ([1,2,3] | contains([2])),
+  inside: ([2] | inside([1,2,3])),
+  index: ("abcabc" | index("bc")),
+  rindex: ("abcabc" | rindex("bc")),
+  indices: ("abcabc" | indices("bc"))
+}

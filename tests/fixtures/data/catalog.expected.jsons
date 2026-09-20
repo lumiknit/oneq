@@ -1,0 +1,5 @@
+{"metadata":{"name":"서울 services","released":"2026-09-10","description":"First line\n--- is text inside this block\n","labels":{"environment":"production","true":"yes"}},"defaults":{"enabled":true,"replicas":2,"limits":{"cpu":0.5,"memory":512},"ports":[8080,8443],"annotations":{}},"services":[{"enabled":true,"replicas":4,"limits":{"cpu":0.5,"memory":1024},"ports":[8080,8443],"annotations":{},"name":"api","routes":[{"path":"/health","methods":["GET"],"auth":false},{"path":"/users","methods":["GET","POST"],"auth":true}]},{"enabled":true,"replicas":2,"limits":{"cpu":0.5,"memory":512},"ports":[],"annotations":{},"queue":"jobs","name":"worker","schedule":null}],"numbers":{"octal":493,"hex":255,"decimal":12,"huge":123456789012345678901234567890,"scientific":1.25E+3},"strings":["yes","on","false","null","123"]}
+{"kind":"report","result":{"successful":true,"errors":[],"details":{"a.b":[1,[2,3]],"":{"<<":"literal"}}},"copy":{"successful":true,"errors":[],"details":{"a.b":[1,[2,3]],"":{"<<":"literal"}}},"folded":"a long description"}
+[]
+null
+[{"name":"final","result":{}},[true,false,null,"---"]]

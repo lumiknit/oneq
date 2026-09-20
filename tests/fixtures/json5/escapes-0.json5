@@ -1,0 +1,10 @@
+{
+  // A string with a literal quote, a backslash, and an embedded
+  // newline - regression fixture for the json5 printer once eating
+  // these unescaped and producing broken JSON.
+  "quoteAndBackslash": "she said \"hi\" then \\left\\",
+  "embeddedNewline": "line one\nline two\ttabbed",
+  "controlChar": "bell: unit-sep:",
+  "unicode": "cafeé ☃",
+  "empty": "",
+}

@@ -1,0 +1,5 @@
+{"kind": "ok", "value": 42}
+{"kind": "bad", "value": "oops"}
+{"kind": "ok", "value": 0}
+{"kind": "bad", "value": null}
+{"kind": "ok", "value": -7}

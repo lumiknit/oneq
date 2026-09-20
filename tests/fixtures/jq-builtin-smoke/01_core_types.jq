@@ -1,0 +1,23 @@
+{
+  type: (null | type),
+  length: ([1,2,3] | length),
+  utf8bytelength: ("한글" | utf8bytelength),
+  keys: ({b:2,a:1} | keys),
+  keys_unsorted: ({b:2,a:1} | keys_unsorted),
+  has: ({a:1} | has("a")),
+  in_: ("a" | in({a:1})),
+  not: (false | not),
+  arrays: ([1] | arrays),
+  objects: ({a:1} | objects),
+  iterables: ([1] | iterables),
+  booleans: (true | booleans),
+  numbers: (1 | numbers),
+  normals: (1 | normals),
+  finites: (1 | finites),
+  strings: ("x" | strings),
+  nulls: (null | nulls),
+  values: (1 | values),
+  scalars: (1 | scalars),
+  select: (1 | select(. == 1)),
+  isempty: (isempty(empty))
+}

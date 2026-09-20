@@ -1,0 +1,56 @@
+Pair JSON stores {"tag": ..., "content": string, "children": [...]}.
+The content key is omitted when the node has no content_span.
+External source spans are optional and omitted from JSON. Content is required
+where the node owns spelling (including calls and named declarations).
+All examples below omit trivia; semantic slot indexes exclude comments.
+
+$a
+=> Var("a")[]
+
+.a.b.c
+=> Path[String[StringChunk("a")], String[StringChunk("b")], String[StringChunk("c")]]
+
+.a[2:3]
+=> Path[`"a"`, Slice[Int(2), Int(3)]]
+
+.a[:3]
+=> Path[`"a"`, Slice[Int(0), Int(3)]]
+
+.a[$start:]
+=> Path[`"a"`, Slice[Var("start")]]
+
+$a.b.c
+=> Invoke(".")[Var("a"), Path[`"b"`, `"c"`]]
+
+..
+=> Invoke("..")[]
+
+$__loc__
+=> Loc[StringChunk(FILE), Int(LINE)]
+
+.a as $x | $x
+=> Bind[`.a`, Var("x"), Var("x")]
+
+. as {$x} ?// [$x] | $x
+=> Bind[Path[], Var("x"), Object[`"x"`, Var("x")], Array[Var("x")]]
+
+def f(x; $y): x + $y; f(1; 2)
+=> Def("f")[Invoke("x")[], Var("y"), Invoke("+")[Invoke("x")[], Var("y")], Invoke("f")[Int(1), Int(2)]]
+
+a | b | c
+=> Invoke("|")[Invoke("a")[], Invoke("b")[], Invoke("c")[]]
+
+{"a": 20, "b": t | c}
+=> Object[`"a"`, Int(20), `"b"`, Invoke("|")[Invoke("t")[], Invoke("c")[]]]
+
+Only explicitly neutral singleton pipe/comma containers collapse. Never remove
+f(.), -f, try f, or f? based solely on their argument count. Parentheses are
+reconstructed from operation precedence, associativity, and syntactic context.
+Comments are childless trivia; pretty output preserves them and inline/compact
+output drops them. Source positions are not used to recover missing semantics.
+
+reduce .[] as {$x} ?// [$x] (0; . + $x)
+=> Reduce[EXPR, INIT, UPDATE, Object[`"x"`, Var("x")], Array[Var("x")]]
+
+foreach .[] as $x (0; . + $x; . * 2)
+=> ForEach[EXPR, INIT, UPDATE, EXTRACT, Var("x")]

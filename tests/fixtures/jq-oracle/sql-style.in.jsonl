@@ -1,0 +1,5 @@
+{"rows": [{"id":1,"name":"a"},{"id":2,"name":"b"},{"id":3,"name":"c"}], "needle": 2}
+{"rows": [], "needle": 1}
+{"rows": [{"id":1,"name":"only"}], "needle": 99}
+{"rows": [{"id":1,"name":"x"},{"id":1,"name":"dup"}], "needle": 1}
+{"rows": [{"id":5,"name":"e"},{"id":6,"name":"f"}], "needle": 6}

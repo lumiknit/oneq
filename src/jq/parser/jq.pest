@@ -1,0 +1,202 @@
+// jq grammar for pest, modeled on jq's bison grammar (parser.y).
+// Reference: https://jqlang.org/manual (also mirrored under
+// .references/<version>/manual.txt in this repo).
+//
+// Pair conversion consumes these rule names in parser/pairs.rs.
+// Keywords are discarded there; operators become Invoke/Assign content.
+// Keep grammar changes synchronized with the Pair contracts and jq reference tests.
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+// Comment is a normal (non-silent) rule, not folded into WHITESPACE,
+// so callers (e.g. the formatter) can recover comments by position.
+// The "\\" ~ "\n" alternative is jq's backslash line-continuation.
+COMMENT = @{ "#" ~ (("\\" ~ "\n") | (!"\n" ~ ANY))* }
+
+// The two character classes identifiers are built from: `ident`
+// itself, and every `kw_*` boundary check below (a keyword is just
+// an `ident` whose spelling happens to be reserved).
+ident_start = _{ ASCII_ALPHA | "_" }
+ident_cont  = _{ ASCII_ALPHANUMERIC | "_" }
+
+// Every jq keyword is wrapped as `kw_*` below instead of used as a
+// bare string literal: a bare literal happily matches as a prefix of
+// a longer identifier (e.g. "and2", "elsex"), since jq's real lexer
+// tokenizes identifiers greedily first and a PEG string literal has
+// no such notion. Each `kw_*` is atomic (`@`) so the boundary check
+// binds directly to the keyword text with no whitespace in between.
+and_kw     = @{ "and" ~ !ident_cont }
+or_kw      = @{ "or" ~ !ident_cont }
+as_kw      = @{ "as" ~ !ident_cont }
+def_kw     = @{ "def" ~ !ident_cont }
+if_kw      = @{ "if" ~ !ident_cont }
+then_kw    = @{ "then" ~ !ident_cont }
+elif_kw    = @{ "elif" ~ !ident_cont }
+else_kw    = @{ "else" ~ !ident_cont }
+end_kw     = @{ "end" ~ !ident_cont }
+reduce_kw  = @{ "reduce" ~ !ident_cont }
+foreach_kw = @{ "foreach" ~ !ident_cont }
+try_kw     = @{ "try" ~ !ident_cont }
+catch_kw   = @{ "catch" ~ !ident_cont }
+break_kw   = @{ "break" ~ !ident_cont }
+label_kw   = @{ "label" ~ !ident_cont }
+module_kw  = @{ "module" ~ !ident_cont }
+include_kw = @{ "include" ~ !ident_cont }
+import_kw  = @{ "import" ~ !ident_cont }
+
+program = { SOI ~ module_decl? ~ import_decl* ~ ((funcdef* ~ &EOI) | query) ~ EOI }
+
+module_decl = { module_kw ~ query ~ ";" }
+
+import_decl = { include_decl | import_decl_full }
+include_decl      = { include_kw ~ string ~ query? ~ ";" }
+import_decl_full  = { import_kw ~ string ~ as_kw ~ (var | ident) ~ query? ~ ";" }
+
+// ---- Query: pipe/comma/def-prefix/label/bind ----
+query = { funcdef_prefix | label_expr | pipe }
+
+funcdef_prefix = { funcdef ~ query }
+label_expr     = { label_kw ~ var ~ "|" ~ query }
+
+pipe = { comma ~ ("|" ~ comma)* }
+
+comma         = { comma_operand ~ ("," ~ comma_operand)* }
+comma_operand = { funcdef_prefix | label_expr | bind_or_expr }
+bind_or_expr  = { expr ~ bind_tail? }
+bind_tail     = { as_kw ~ patterns ~ "|" ~ query }
+
+// ---- Expr: binary-operator precedence ladder, loosest to tightest ----
+// "//" (right-assoc) > assignment (nonassoc) > "or" > "and" >
+// comparison (nonassoc) > "+"/"-" > "*"/"/"/"%" > Term.
+expr   = { alt }
+alt    = { assign ~ ("//" ~ assign)* }
+assign = { or_expr ~ (assign_op ~ or_expr)? }
+assign_op = { "|=" | "+=" | "-=" | "*=" | "/=" | "%=" | "//=" | "=" }
+
+or_expr  = { and_expr ~ (or_kw ~ and_expr)* }
+and_expr = { compare ~ (and_kw ~ compare)* }
+
+compare    = { additive ~ (compare_op ~ additive)? }
+compare_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+
+additive = { multiplicative ~ (add_op ~ multiplicative)* }
+add_op   = { "+" | "-" }
+
+multiplicative = { term ~ (mul_op ~ term)* }
+mul_op         = { "*" | "/" | "%" }
+
+// ---- Term: unary minus and the postfix chain over a primary ----
+term        = { unary_minus | postfix }
+unary_minus = { "-" ~ term }
+
+postfix    = { primary ~ postfix_op* }
+postfix_op = { field | quoted_field | dot_bracket_op | bracket_op | optional }
+// `.foo.[0]` is sugar for `.foo[0]` - the dot is purely syntactic, so this
+// rule is silent and just exposes the inner `bracket_op` node.
+dot_bracket_op = _{ "." ~ bracket_op }
+
+// `field` is compound-atomic so ".foo" and ". foo" parse differently,
+// matching jq's lexer fusing "." + name only when adjacent.
+field        = ${ "." ~ ident }
+quoted_field = { "." ~ string }
+bracket_op   = { "[" ~ bracket_inner? ~ "]" }
+bracket_inner = { slice | query }
+// Separate bound rules let Pair conversion insert Int(0) only for a missing
+// left bound; an absent right bound omits its semantic child.
+slice        = { slice_from? ~ ":" ~ slice_to? }
+slice_from   = { query }
+slice_to     = { query }
+optional     = { "?" }
+
+// Ordered choice disambiguates: keyword-led forms are tried before
+// the generic `funccall`, and "."-led alternatives go from most to
+// least specific ("..", ".foo", "."). `funcdef` has no primary
+// alternative - it only appears via `funcdef_prefix` at query level.
+primary = {
+    reduce_expr
+  | foreach_expr
+  | if_expr
+  | try_expr
+  | array
+  | object
+  | paren
+  | break_expr
+  | recurse
+  | leading_field
+  | leading_quoted_field
+  | leading_bracket
+  | identity
+  | format_prefixed_string
+  | format
+  | var
+  | string
+  | number
+  | funccall
+}
+
+recurse              = { ".." }
+leading_field        = ${ "." ~ ident }
+leading_quoted_field = { "." ~ string }
+leading_bracket      = { "." ~ bracket_op }
+identity             = { "." }
+
+break_expr = { break_kw ~ var }
+
+paren  = { "(" ~ query ~ ")" }
+array  = { "[" ~ query? ~ "]" }
+object = { "{" ~ (object_pair ~ ("," ~ object_pair)* ~ ","?)? ~ "}" }
+object_pair = { (object_key ~ (":" ~ dict_expr)?) | (var ~ (":" ~ dict_expr)?) }
+object_key  = { ident | string | ("(" ~ query ~ ")") }
+// DictExpr allows '|' (but not ',') between object values, per
+// parser.y's separate DictExpr production.
+dict_expr = { expr ~ ("|" ~ dict_expr)? }
+
+funcdef = { def_kw ~ ident ~ ("(" ~ param ~ (";" ~ param)* ~ ")")? ~ ":" ~ query ~ ";" }
+param   = { var | ident }
+
+if_expr = {
+    if_kw ~ query ~ then_kw ~ query
+  ~ (elif_kw ~ query ~ then_kw ~ query)*
+  ~ (else_kw ~ query)?
+  ~ end_kw
+}
+
+reduce_expr  = { reduce_kw ~ expr ~ as_kw ~ patterns ~ "(" ~ query ~ ";" ~ query ~ ")" }
+foreach_expr = { foreach_kw ~ expr ~ as_kw ~ patterns ~ "(" ~ query ~ ";" ~ query ~ (";" ~ query)? ~ ")" }
+try_expr     = { try_kw ~ term ~ (catch_kw ~ term)? }
+
+funccall = { ident ~ ("(" ~ query ~ (";" ~ query)* ~ ")")? }
+
+// Pair conversion resolves $__loc__ to Loc with the original file and line.
+var = ${ "$"+ ~ ident }
+
+// @name, optionally followed by a string literal ("@base64\"...\"").
+format_prefixed_string = { format ~ string }
+format                 = @{ "@" ~ ident }
+
+// String content is captured verbatim (escapes as written, not
+// decoded), so printing it back out needs no re-encoding step.
+// Compound-atomic so whitespace inside the string isn't skipped;
+// `interpolation` opts back out (`!{}`) so "\(...)" parses as an
+// ordinary whitespace-sensitive query.
+string          = ${ "\"" ~ string_part* ~ "\"" }
+string_part     = { interpolation | string_char }
+interpolation   = !{ "\\(" ~ query ~ ")" }
+string_char     = @{ ("\\" ~ ANY) | (!("\"" | "\\") ~ ANY) }
+
+number = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)? }
+
+// Every keyword above is identifier-shaped text handled by its own
+// `kw_*` rule, so `ident` can just mean "identifier-shaped text"
+// without maintaining a separate reserved-word table.
+ident = @{ ident_start ~ ident_cont* ~ ("::" ~ ident_start ~ ident_cont*)* }
+
+// ---- Patterns (destructuring: "as", reduce/foreach bindings) ----
+patterns = { pattern ~ ("?//" ~ pattern)* }
+pattern  = { var | array_pattern | object_pattern }
+array_pattern  = { "[" ~ (pattern ~ ("," ~ pattern)*)? ~ "]" }
+object_pattern = { "{" ~ object_pattern_field ~ ("," ~ object_pattern_field)* ~ "}" }
+object_pattern_field = {
+    (var ~ (":" ~ pattern)?)
+  | (object_key ~ ":" ~ pattern)
+}

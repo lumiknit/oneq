@@ -1,0 +1,7 @@
+{
+  'owner': "lumiknit",
+  count: 3,
+  active: true,
+  labels: ['x','y','z',],
+  settings: {timeout: 30, retries: 5,},
+}
