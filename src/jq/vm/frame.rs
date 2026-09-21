@@ -12,16 +12,26 @@ pub struct Closure {
 }
 #[derive(Debug)]
 pub enum SlotValue {
-    Local {
-        value: Value,
-        path: Option<Vec<Value>>,
-    },
+    Local(Operand),
     Filter(Rc<Closure>),
     /// Immutable reference to a slot in a captured lexical environment.
     Capture {
         frame: Rc<Frame>,
         slot: usize,
     },
+}
+
+/// A value and its optional source path, shared by bindings and VM continuations.
+#[derive(Clone, Debug, Default)]
+pub struct Operand {
+    pub value: Value,
+    pub(crate) path: Option<Stack<Value>>,
+}
+
+impl From<Value> for Operand {
+    fn from(value: Value) -> Self {
+        Self { value, path: None }
+    }
 }
 
 /// An immutable binding region. Calls and binding occurrences allocate their
@@ -75,7 +85,7 @@ pub(crate) struct ReturnFrame {
 #[derive(Clone, Debug)]
 pub(crate) struct Handler {
     pub destructure: bool,
-    pub recovery: Box<ChoicePoint>,
+    pub recovery: Rc<ChoicePoint>,
     pub choices: usize,
     pub collections: usize,
 }
@@ -83,11 +93,9 @@ pub(crate) struct Handler {
 pub(crate) struct ChoicePoint {
     pub pc: usize,
     pub chunk: usize,
-    pub input: Value,
+    pub input: Operand,
     pub frame: Rc<Frame>,
-    pub operands: Stack<Value>,
-    pub path: Option<Stack<Value>>,
-    pub operand_paths: Stack<Option<Stack<Value>>>,
+    pub operands: Stack<Operand>,
     pub path_depth: usize,
     pub path_depth_stack: Stack<usize>,
     pub calls: Stack<ReturnFrame>,

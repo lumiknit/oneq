@@ -220,4 +220,4 @@ The REPL differs from normal `1q` filters in these ways:
 
 Benchmarks are maintained in `/benchmarks`. Run `go run /benchmarks/compare.go` to compare implementations.
 
-At present, `1q` is approximately twice as slow as `jq`, `jaq`, and `gojq`.
+At present, `1q` has performance close to the original `jq`, ranging from approximately 0.9x to 1.2x depending on the test case.

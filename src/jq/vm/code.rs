@@ -60,7 +60,10 @@ pub enum Instruction {
     LoadSaved(usize),
     Fork(usize),
     Jump(usize),
-    BuiltinCall(crate::jq::builtins::BuiltinInstr),
+    BuiltinCall0(crate::jq::builtins::BuiltinOp0),
+    BuiltinCall1(crate::jq::builtins::BuiltinOp1),
+    BuiltinCall2(crate::jq::builtins::BuiltinOp2),
+    BuiltinCall3(crate::jq::builtins::BuiltinOp3),
     RunCalc(usize),
     /// Opens a collection region: pushes a resume choice at `end` and starts a
     /// fresh accumulator. Falls through into the collected sub-expression.
@@ -106,8 +109,6 @@ pub struct Chunk {
 #[derive(Debug, Default)]
 pub(crate) struct Program {
     pub chunks: Vec<Chunk>,
-    /// Conservative across all published chunks, including REPL closures.
-    pub tracks_paths: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

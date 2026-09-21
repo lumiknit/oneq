@@ -806,6 +806,30 @@ fn write_basic_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
+/// Writes `s` as a TOML multi-line basic string (`"""..."""`), keeping
+/// newlines and tabs literal for readability. Every `"` is still escaped
+/// (rather than only when it would collide with the closing delimiter) so
+/// the result can never accidentally contain an unescaped `"""` sequence.
+fn write_multiline_basic_string(out: &mut String, s: &str) {
+    out.push_str("\"\"\"\n");
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\t' => out.push(c),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) <= 0x1F => {
+                use std::fmt::Write;
+                write!(out, "\\u{:04x}", c as u32).unwrap();
+            }
+            c => out.push(c),
+        }
+    }
+    out.push_str("\"\"\"");
+}
+
 fn write_key(out: &mut String, s: &str) {
     if is_bare_key(s) {
         out.push_str(s);
@@ -840,6 +864,7 @@ fn write_value_inline(
     out: &mut String,
     value: &Value,
     opts: &render::Options,
+    top: bool,
 ) -> Result<(), DataError> {
     let sorted = opts.out.sort_keys;
     match value {
@@ -864,7 +889,11 @@ fn write_value_inline(
         }
         Value::String(s) => {
             let mut buf = String::new();
-            write_basic_string(&mut buf, s);
+            if top && opts.out.compact_level == render::CompactLevel::Pretty && s.contains('\n') {
+                write_multiline_basic_string(&mut buf, s);
+            } else {
+                write_basic_string(&mut buf, s);
+            }
             super::json::push_styled(out, opts, render::ThemeIdx::String, &buf);
         }
         Value::Array(items) => {
@@ -878,7 +907,7 @@ fn write_value_inline(
                     out.push_str(", ");
                 }
                 first = false;
-                write_value_inline(out, item, opts)?;
+                write_value_inline(out, item, opts, false)?;
             }
             out.push(']');
         }
@@ -898,7 +927,7 @@ fn write_value_inline(
                     }
                     write_key_themed(out, strs::resolve(**k).unwrap(), opts);
                     out.push_str(" = ");
-                    write_value_inline(out, v, opts)?;
+                    write_value_inline(out, v, opts, false)?;
                 }
                 out.push_str(" }");
             }
@@ -947,7 +976,7 @@ fn write_table(
         } else {
             write_key_themed(out, &key, opts);
             out.push_str(" = ");
-            write_value_inline(out, v, opts)?;
+            write_value_inline(out, v, opts, true)?;
             out.push('\n');
         }
     }
@@ -959,6 +988,9 @@ fn write_table(
             .map(|s| key_repr(s))
             .collect::<Vec<_>>()
             .join(".");
+        if opts.out.compact_level == render::CompactLevel::Pretty && !out.is_empty() {
+            out.push('\n');
+        }
         match v {
             Value::Object(_) => {
                 out.push('[');
@@ -967,7 +999,14 @@ fn write_table(
                 write_table(out, v, &path, opts)?;
             }
             Value::Array(items) => {
-                for item in items.iter().filter(|i| !matches!(i, Value::Null)) {
+                for (i, item) in items
+                    .iter()
+                    .filter(|i| !matches!(i, Value::Null))
+                    .enumerate()
+                {
+                    if i > 0 && opts.out.compact_level == render::CompactLevel::Pretty {
+                        out.push('\n');
+                    }
                     out.push_str("[[");
                     out.push_str(&header);
                     out.push_str("]]\n");
@@ -1018,11 +1057,12 @@ impl Serializer for TomlSerializer {
             }
         }
         let mut text = text.trim_end_matches('\n').to_owned();
-        if self.written
-            && self.options.out.doc_begin.is_none()
-            && self.options.out.doc_end.is_none()
-        {
-            text.insert_str(0, "+++\n");
+        if self.written {
+            if self.options.out.compact_level == render::CompactLevel::Pretty {
+                text.insert_str(0, "\n+++\n\n");
+            } else {
+                text.insert_str(0, "+++\n");
+            }
         }
         if let Some(begin) = self.options.out.doc_begin {
             text.insert_str(0, begin);

@@ -28,6 +28,27 @@ fn direct_builtin_dispatch_preserves_argument_order_and_owned_values() {
             "[110,210,120,220,120,220,140,240]",
         ),
         ("[range((0,1); (2,3))]", "null", "[0,1,0,1,2,1,1,2]"),
+        ("[range(0;3) | range(0;.)]", "null", "[0,0,1]"),
+        (
+            "[range(2;2), range(3;1), range(0.5;3)]",
+            "null",
+            "[0.5,1.5,2.5]",
+        ),
+        (
+            "[try (range(0;4) | if . == 2 then error(\"stop\") else . end) catch .]",
+            "null",
+            "[0,1,\"stop\"]",
+        ),
+        (
+            "[range(0;3) | try (., error(.)) catch .]",
+            "null",
+            "[0,0,1,1,2,2]",
+        ),
+        (
+            "[first(range(0;1000000000)), range(0;2)]",
+            "null",
+            "[0,0,1]",
+        ),
         (". as $x | [(. + [3]), $x]", "[1,2]", "[[1,2,3],[1,2]]"),
         ("[path(getpath([\"a\"]))]", "{\"a\":[1]}", "[[\"a\"]]"),
     ] {
@@ -205,6 +226,14 @@ fn shared_frames_preserve_recursive_and_backtracked_captures_without_inlining() 
             "[1,1,2,2]",
         ),
         ("[path(.a as $x | $x[0])]", "[[\"a\",0]]"),
+        (
+            "[path(.a as $x | ($x[0], $x[], $x))]",
+            "[[\"a\",0],[\"a\",0],[\"a\"]]",
+        ),
+        (
+            "[path(.a as $x | def f: $x; (f[0], f))]",
+            "[[\"a\",0],[\"a\"]]",
+        ),
     ] {
         let mut session = Session::new();
         let entry = session

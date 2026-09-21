@@ -142,13 +142,6 @@ impl Session {
         self.values.extend(chunk.data_bindings.iter().cloned());
         let index = self.entries.len();
         self.entries.push(Some(self.program.chunks.len()));
-        // Exported closures can retain binding paths that a future REPL entry
-        // observes via path(f), even if no current chunk contains BeginPath.
-        self.program.tracks_paths |= !chunk.ir.export_functions.is_empty()
-            || chunk
-                .code
-                .iter()
-                .any(|op| matches!(op, super::code::Instruction::BeginPath));
         self.program.chunks.push(chunk);
         self.symbols = symbols;
         self.templates.extend(templates);
@@ -360,7 +353,6 @@ impl Execution<'_> {
                         self.input_error = false;
                         self.vm = Some(Vm::start(
                             self.chunk,
-                            self.session.program.tracks_paths,
                             input,
                             Frame {
                                 base: 0,
@@ -372,10 +364,7 @@ impl Execution<'_> {
                                         match key {
                                             SlotKey::Local(id) => {
                                                 self.candidate.get(id).map(|value| {
-                                                    SlotValue::Local {
-                                                        value: value.clone(),
-                                                        path: None,
-                                                    }
+                                                    SlotValue::Local(value.clone().into())
                                                 })
                                             }
                                             SlotKey::Function(id) => self

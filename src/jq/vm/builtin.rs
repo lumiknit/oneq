@@ -3,7 +3,7 @@
 use super::{JqError, Vm, VmEvent, host::Host, value};
 use crate::{
     data::Value,
-    jq::builtins::{self, BuiltinInstr},
+    jq::builtins::{self, BuiltinInstr, BuiltinOp0, BuiltinOp1, BuiltinOp2, BuiltinOp3},
     strs,
 };
 
@@ -13,46 +13,39 @@ macro_rules! dispatch {
             // This is an instruction-dispatch fragment with one call site,
             // not another runtime call boundary. Large builtin bodies remain
             // ordinary direct calls, with their own inlining decisions.
-            #[inline(always)]
-            pub(super) fn step_builtin<const PATH: bool>(
+            #[inline]
+            pub(super) fn step_builtin<const N: usize>(
                 &mut self, instr: BuiltinInstr, host: &mut dyn Host,
             ) -> Result<Option<VmEvent>, JqError> {
-                let arity = instr.arity();
-                let remaining = self.operands.len().checked_sub(arity + 1)
-                    .ok_or_else(|| JqError::InvalidCode("missing builtin operands".into()))?;
-                if PATH {
-                    self.operand_paths.truncate(remaining);
-                }
-                self.path = None;
-                let mut storage = [const { Value::Null }; BuiltinInstr::MAX_ARITY];
-                let args = &mut storage[..arity];
-                for arg in args.iter_mut() {
-                    *arg = self.operands.pop().unwrap();
-                }
-                // Share operand extraction across arms to keep the hot dispatch
-                // compact. Infix expressions push in the opposite order.
-                if !instr.is_infix_operator() {
-                    args.reverse();
-                }
-                let input = self.operands.pop().unwrap();
+                self.input.path = None;
+                debug_assert_eq!(instr.arity(), N);
+                let mut storage = [const { Value::Null }; N];
+                let args = &mut storage;
+                let input = if N == 0 {
+                    self.input.value.clone()
+                } else {
+                    for arg in args.iter_mut() { *arg = self.operands.pop().unwrap().value; }
+                    if !instr.is_infix_operator() { args.reverse(); }
+                    self.operands.pop().unwrap().value
+                };
                 match instr {
                     $(BuiltinInstr::$variant => {
-                        self.input = builtins::$module::$function(&input, args)?;
+                        self.input.value = builtins::$module::$function(&input, args)?;
                         // Only getpath has this path-producing scalar behavior.
                         // The instruction check folds away in every other arm.
-                        if PATH && matches!(BuiltinInstr::$variant, BuiltinInstr::GetPath)
+                        if matches!(BuiltinInstr::$variant, BuiltinInstr::GetPath)
                             && self.path_depth > 0
                             && let Some(Value::Array(steps)) = args.first()
                         {
-                            self.path = Some(steps.iter().cloned().collect());
+                            self.input.path = Some(steps.iter().cloned().collect());
                         }
                     },)*
                     BuiltinInstr::Add => {
                         // Release evaluation-only aliases before COW. Captured
                         // bindings and choices must still retain their values.
-                        self.input = Value::Null;
+                        self.input.value = Value::Null;
                         drop(input);
-                        self.input = builtins::scalar::add_owned(args)?;
+                        self.input.value = builtins::scalar::add_owned(args)?;
                     }
                     BuiltinInstr::Range => {
                         let mut state = builtins::range();
@@ -77,26 +70,26 @@ macro_rules! dispatch {
                         return Ok(Some(VmEvent::Halt { code: 0, value: Value::Null }));
                     }
                     BuiltinInstr::Input => {
-                        self.input = host.next_input().unwrap_or_else(||
+                        self.input.value = host.next_input().unwrap_or_else(||
                             Err(JqError::Runtime(Value::String("break".to_string().into()))))?;
                     }
                     BuiltinInstr::Env => {
-                        self.input = host.environment()?;
+                        self.input.value = host.environment()?;
                     }
                     BuiltinInstr::InputFilename => {
-                        self.input = match host.input_filename().and_then(strs::resolve) {
+                        self.input.value = match host.input_filename().and_then(strs::resolve) {
                             Some(name) => Value::String(name.to_string().into()),
                             None => Value::Null,
                         };
                     }
                     BuiltinInstr::InputLineNumber => {
-                        self.input = Value::Float(host.input_line_number().unwrap_or(0) as f64);
+                        self.input.value = Value::Float(host.input_line_number().unwrap_or(0) as f64);
                     }
                     BuiltinInstr::ModuleMeta => {
-                        self.input = host.modulemeta(&input)?;
+                        self.input.value = host.modulemeta(&input)?;
                     }
                     BuiltinInstr::HaveDecnum | BuiltinInstr::HaveLiteralNumbers => {
-                        self.input = Value::Bool(matches!(instr, BuiltinInstr::HaveDecnum));
+                        self.input.value = Value::Bool(matches!(instr, BuiltinInstr::HaveDecnum));
                     }
                 }
                 Ok(None)
@@ -104,4 +97,40 @@ macro_rules! dispatch {
         }
     };
 }
+
 builtins::scalar_instructions!(dispatch);
+
+impl Vm {
+    #[inline]
+    pub(super) fn step_builtin0(
+        &mut self,
+        op: BuiltinOp0,
+        host: &mut dyn Host,
+    ) -> Result<Option<VmEvent>, JqError> {
+        self.step_builtin::<0>(op.0, host)
+    }
+    #[inline]
+    pub(super) fn step_builtin1(
+        &mut self,
+        op: BuiltinOp1,
+        host: &mut dyn Host,
+    ) -> Result<Option<VmEvent>, JqError> {
+        self.step_builtin::<1>(op.0, host)
+    }
+    #[inline]
+    pub(super) fn step_builtin2(
+        &mut self,
+        op: BuiltinOp2,
+        host: &mut dyn Host,
+    ) -> Result<Option<VmEvent>, JqError> {
+        self.step_builtin::<2>(op.0, host)
+    }
+    #[inline]
+    pub(super) fn step_builtin3(
+        &mut self,
+        op: BuiltinOp3,
+        host: &mut dyn Host,
+    ) -> Result<Option<VmEvent>, JqError> {
+        self.step_builtin::<3>(op.0, host)
+    }
+}
