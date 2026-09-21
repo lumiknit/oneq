@@ -15,10 +15,15 @@ pub(crate) fn debug(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     .map_err(|e| JqError::Runtime(Value::String(e.to_string().into())))?;
     Ok(input.clone())
 }
-/// jq's `stderr`: prints `.` compactly to stderr with no decoration, no trailing newline.
+/// jq's `stderr`: prints `.` in raw-and-compact mode to stderr with no
+/// decoration, no trailing newline. "Raw" here means a string prints
+/// unquoted, unlike `debug`; every other type still prints as compact JSON.
 pub(crate) fn stderr(input: &Value, _: &[Value]) -> Result<Value, JqError> {
-    write!(crate::io::stderr(), "{}", input.to_compact_json())
-        .map_err(|e| JqError::Runtime(Value::String(e.to_string().into())))?;
+    let result = match input {
+        Value::String(s) => write!(crate::io::stderr(), "{s}"),
+        other => write!(crate::io::stderr(), "{}", other.to_compact_json()),
+    };
+    result.map_err(|e| JqError::Runtime(Value::String(e.to_string().into())))?;
     Ok(input.clone())
 }
 pub(crate) fn length(input: &Value, _: &[Value]) -> Result<Value, JqError> {

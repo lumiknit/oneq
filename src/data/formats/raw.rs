@@ -96,8 +96,10 @@ impl<'a> Iterator for RawSlurpParser<'a> {
 
 impl<'a> super::Parser for RawSlurpParser<'a> {}
 
-/// RawSerializer pack the value into the value.
-/// However, it'll only handle string.
+/// RawSerializer implements jq's `-r`/`--raw-output`/`--join-output`: a
+/// string prints unquoted, but every other type still prints as JSON
+/// (honoring the usual compact/indent/color/sort-keys render options) rather
+/// than erroring.
 pub struct RawSerializer {
     output: Output,
     render_options: render::Options,
@@ -118,12 +120,21 @@ impl super::Serializer for RawSerializer {
             write!(self.output, "{}", s).map_err(DataError::IOError)?;
         }
 
-        if let Value::String(s) = value {
-            write!(self.output, "{}", s).map_err(DataError::IOError)?;
-        } else {
-            Err(DataError::UnableToSerializeValueType {
-                value_type: value.type_name(),
-            })?;
+        match &value {
+            Value::String(s) => write!(self.output, "{s}").map_err(DataError::IOError)?,
+            other => {
+                let mut out = String::new();
+                super::json::write_value(
+                    &mut out,
+                    other,
+                    &self.render_options,
+                    0,
+                    super::json::KeywordPreset::JSON,
+                );
+                self.output
+                    .write_all(out.as_bytes())
+                    .map_err(DataError::IOError)?;
+            }
         }
 
         if let Some(s) = self.render_options.out.doc_end {

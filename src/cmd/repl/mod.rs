@@ -7,9 +7,67 @@ use crate::{
     jq::parser,
     render,
 };
-use controller::Controller;
-use rustyline::{DefaultEditor, error::ReadlineError};
-use std::str::FromStr;
+use controller::{Controller, CompletionWord};
+use rustyline::{
+    Config, Context, Editor, Helper,
+    completion::{Completer, Pair},
+    error::ReadlineError,
+    highlight::Highlighter,
+    hint::Hinter,
+    history::DefaultHistory,
+    validate::Validator,
+    CompletionType,
+};
+use std::{cell::RefCell, rc::Rc, str::FromStr};
+
+/// Completes function and `$variable` names currently in scope. The word
+/// list is refreshed from the Controller after each successful evaluation,
+/// since new `def`s and bindings can only be completed once they exist.
+struct ReplHelper {
+    words: Rc<RefCell<Vec<CompletionWord>>>,
+}
+impl Helper for ReplHelper {}
+impl Highlighter for ReplHelper {}
+impl Hinter for ReplHelper {
+    type Hint = String;
+}
+impl Validator for ReplHelper {}
+impl Completer for ReplHelper {
+    type Candidate = Pair;
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        let start = word_start(line, pos);
+        let prefix = &line[start..pos];
+        if prefix.is_empty() {
+            return Ok((start, Vec::new()));
+        }
+        let matches = self
+            .words
+            .borrow()
+            .iter()
+            .filter(|word| word.replacement.starts_with(prefix))
+            .map(|word| Pair {
+                display: word.display.clone(),
+                replacement: word.replacement.clone(),
+            })
+            .collect();
+        Ok((start, matches))
+    }
+}
+/// Widens left from `pos` over an identifier, including a leading `$` so
+/// variables complete on the same token the user is typing.
+fn word_start(line: &str, pos: usize) -> usize {
+    line[..pos]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_alphanumeric() || *c == '_' || *c == '$')
+        .last()
+        .map_or(pos, |(i, _)| i)
+}
 
 fn print_help() {
     println!(
@@ -110,7 +168,19 @@ pub fn run(args: &flags::Args) {
     let ps1 = wrap_prompt(&options.ps1, args.color_output(), "1q> ");
     let ps2 = wrap_prompt(&options.ps2, args.color_output(), "..> ");
     println!("Welcome to 1q REPL. Type :help for help, :q to exit");
-    let mut rl = DefaultEditor::new().expect("failed to init line editor");
+    let completion_words = Rc::new(RefCell::new(controller.completion_words()));
+    let editor_config = Config::builder()
+        .completion_type(CompletionType::List)
+        .completion_show_all_if_ambiguous(true)
+        .history_ignore_dups(true)
+        .expect("history_ignore_dups is only invalid with size 0, which we don't set")
+        .history_ignore_space(true)
+        .build();
+    let mut rl: Editor<ReplHelper, DefaultHistory> =
+        Editor::with_config(editor_config).expect("failed to init line editor");
+    rl.set_helper(Some(ReplHelper {
+        words: completion_words.clone(),
+    }));
     let mut buffer = String::new();
     let mut exit_armed = false;
     loop {
@@ -147,7 +217,10 @@ pub fn run(args: &flags::Args) {
             match command {
                 "help" | "h" => print_help(),
                 "doc" | "d" => run_doc_command(rest),
-                "reset" => controller.reset(),
+                "reset" => {
+                    controller.reset();
+                    *completion_words.borrow_mut() = controller.completion_words();
+                }
                 "dump" => {
                     let dump = controller.dump();
                     if rest.is_empty() {
@@ -206,6 +279,7 @@ pub fn run(args: &flags::Args) {
                         break;
                     }
                 }
+                *completion_words.borrow_mut() = controller.completion_words();
             }
             Err(error) => eprintln!("1q repl: {error}"),
         }
