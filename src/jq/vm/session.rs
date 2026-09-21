@@ -6,7 +6,7 @@ use crate::jq::{
         modules::{ModuleCache, ModuleGraph},
         templates::TemplateStore,
     },
-    ir::{BindingId, FunctionId},
+    ir::{BindingId, CallTarget, FunctionId},
     symbols::{Names, Symbols},
 };
 use crate::{data::Value, strs};
@@ -152,6 +152,31 @@ impl Session {
     }
     pub fn is_definition(&self, entry: EntryId) -> Result<bool, JqError> {
         Ok(self.program.chunks[self.chunk(entry)?].definition_only)
+    }
+
+    /// Names of functions currently callable: declared and with a live closure
+    /// (a `def` whose body has actually run once to register it).
+    pub fn function_names(&self) -> impl Iterator<Item = (&'static str, usize)> + '_ {
+        self.symbols
+            .names
+            .functions
+            .iter()
+            .filter_map(|((name, arity), target)| match target {
+                CallTarget::Function(id) if self.functions.contains_key(id) => {
+                    strs::resolve(*name).map(|name| (name, *arity))
+                }
+                _ => None,
+            })
+    }
+
+    /// Names of variables currently readable: declared and materialized into
+    /// session state (values only persist across entries when exported).
+    pub fn variable_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.symbols
+            .names
+            .bindings
+            .iter()
+            .filter_map(|(name, id)| self.values.contains_key(id).then(|| strs::resolve(*name))?)
     }
 
     /// Whether this entry can request another value from the host input

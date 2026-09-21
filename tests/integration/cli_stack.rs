@@ -61,6 +61,7 @@ fn cli_data_formats_match_expected_json_in_all_input_modes() {
             vec!["--slurp"],
             vec!["--stream", "--slurp"],
         ] {
+            let streaming = mode.contains(&"--stream");
             let mut args = vec!["-c", "-S"];
             args.extend(mode);
             args.push(".");
@@ -69,7 +70,7 @@ fn cli_data_formats_match_expected_json_in_all_input_modes() {
             // against JSON with the source's actual insertion order.
             let assembled = run_oneq(&["-F", format, "-c", "."], source);
             assert!(assembled.status.success());
-            let reference_input = if args.contains(&"--stream") {
+            let reference_input = if streaming {
                 assembled.stdout.as_slice()
             } else {
                 expected
@@ -84,7 +85,29 @@ fn cli_data_formats_match_expected_json_in_all_input_modes() {
                     String::from_utf8_lossy(&out.stderr)
                 );
             }
-            assert_eq!(actual.stdout, reference.stdout, "{args:?}");
+            if streaming {
+                let slurped = args.contains(&"--slurp");
+                let reference = fold_stream(&reference.stdout, slurped);
+                let actual = fold_stream(&actual.stdout, slurped);
+                for out in [&reference, &actual] {
+                    assert!(
+                        out.status.success(),
+                        "{args:?} (folding stream): {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                }
+                assert_eq!(actual.stdout, reference.stdout, "{args:?} (folded)");
+            } else {
+                assert_eq!(actual.stdout, reference.stdout, "{args:?}");
+            }
         }
+    }
+}
+
+fn fold_stream(raw: &[u8], slurped: bool) -> std::process::Output {
+    if slurped {
+        run_oneq(&["-c", "-S", "fromstream(.[])"], raw)
+    } else {
+        run_oneq(&["-s", "-c", "-S", "fromstream(.[])"], raw)
     }
 }
