@@ -276,19 +276,19 @@ impl Vm {
     fn restore(&mut self, point: ChoicePoint) {
         self.pc = point.pc;
         self.chunk = point.chunk;
-        self.calls = point.calls;
+        self.calls.restore(point.calls);
         self.input = point.input;
         let previous = std::mem::replace(&mut self.frame, point.frame);
         self.recycle_frame(previous);
-        self.operands = point.operands;
+        self.operands.restore(point.operands);
         self.path_depth = point.path_depth;
-        self.path_depth_stack = point.path_depth_stack;
+        self.path_depth_stack.restore(point.path_depth_stack);
         self.handlers.restore(point.handlers);
-        self.folds = point.folds;
-        self.labels = point.labels;
+        self.folds.restore(point.folds);
+        self.labels.restore(point.labels);
         self.native = point.native;
         self.iteration = point.iteration;
-        self.alternatives = point.alternatives;
+        self.alternatives.restore(point.alternatives);
     }
     fn backtrack(&mut self) {
         while let Some(mut point) = self.choices.pop() {
@@ -738,6 +738,9 @@ impl Vm {
             Instruction::BuiltinCall0(instr) => return self.step_builtin0(*instr, host),
             Instruction::BuiltinCall1(instr) => return self.step_builtin1(*instr, host),
             Instruction::BuiltinCall2(instr) => return self.step_builtin2(*instr, host),
+            Instruction::InfixConst(instr, right) => {
+                return self.step_infix_const(*instr, right, host);
+            }
             Instruction::BuiltinCall3(instr) => return self.step_builtin3(*instr, host),
         }
         Ok(None)

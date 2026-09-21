@@ -213,6 +213,11 @@ pub fn registry() -> &'static [BuiltinSpec] {
             [ParamMode::Value, ParamMode::Value, ParamMode::Value],
             MatchImpl
         ),
+        scalar_spec!(
+            "_capture_impl",
+            [ParamMode::Value, ParamMode::Value],
+            CaptureImpl
+        ),
         scalar_spec!("sort", [], Sort),
         scalar_spec!("unique", [], Unique),
         scalar_spec!("min", [], Min),
@@ -223,6 +228,8 @@ pub fn registry() -> &'static [BuiltinSpec] {
         scalar_spec!("utf8bytelength", [], Utf8bytelength),
         scalar_spec!("explode", [], Explode),
         scalar_spec!("implode", [], Implode),
+        scalar_spec!("ascii_downcase", [], AsciiDowncase),
+        scalar_spec!("ascii_upcase", [], AsciiUpcase),
         scalar_spec!("startswith", [ParamMode::Value], Startswith),
         scalar_spec!("endswith", [ParamMode::Value], Endswith),
         scalar_spec!("trim", [], Trim),

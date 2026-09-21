@@ -63,6 +63,9 @@ pub enum Instruction {
     BuiltinCall0(crate::jq::builtins::BuiltinOp0),
     BuiltinCall1(crate::jq::builtins::BuiltinOp1),
     BuiltinCall2(crate::jq::builtins::BuiltinOp2),
+    /// Apply an infix operator to the current value and an immutable literal.
+    /// The literal needs no runtime operand stack entry or continuation.
+    InfixConst(crate::jq::builtins::BuiltinOp2, Value),
     BuiltinCall3(crate::jq::builtins::BuiltinOp3),
     RunCalc(usize),
     /// Opens a collection region: pushes a resume choice at `end` and starts a

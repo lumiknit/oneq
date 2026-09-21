@@ -19,6 +19,148 @@ fn run(source: &str, input: &str) -> Result<Vec<Value>, String> {
 }
 
 #[test]
+fn native_ascii_case_preserves_unicode_types_and_saved_values() {
+    for (source, input, expected) in [
+        (
+            "[ascii_downcase, ascii_upcase, .]",
+            r#""AbC_äÉ한🙂\u0000""#,
+            r#"["abc_äÉ한🙂\u0000","ABC_äÉ한🙂\u0000","AbC_äÉ한🙂\u0000"]"#,
+        ),
+        ("[ascii_downcase, ascii_upcase]", r#""""#, r#"["",""]"#),
+        (
+            "[ascii_downcase, ascii_upcase]",
+            r#""123_äÉ한🙂""#,
+            r#"["123_äÉ한🙂","123_äÉ한🙂"]"#,
+        ),
+        (
+            "[. as $saved | ascii_downcase, $saved]",
+            r#""ABC""#,
+            r#"["abc","ABC"]"#,
+        ),
+        ("def ascii_downcase: 42; ascii_downcase", r#""ABC""#, "42"),
+        (
+            "[try ascii_downcase catch ., try ascii_upcase catch .]",
+            "42",
+            r#"["explode input must be a string","explode input must be a string"]"#,
+        ),
+    ] {
+        assert_eq!(
+            run(source, input).unwrap(),
+            vec![data::parse_json_str(expected).unwrap()],
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn regex_consumers_preserve_captures_flags_and_empty_matches() {
+    for (input, pattern, flags) in [
+        (r#""ab a""#, r#""(?<x>a)(?<y>b)?""#, r#""g""#),
+        (r#""ba""#, r#""(?<x>a*)""#, r#""g""#),
+        (r#""ba""#, r#""(?<x>a*)""#, r#""gn""#),
+        (r#""""#, r#""(?<x>a*)""#, r#""gn""#),
+        (r#""""#, r#""(?<x>a*)""#, "null"),
+        (r#""é🙂é""#, r#""(?<x>é|🙂)""#, r#""g""#),
+        (r#""AB""#, r#""(?<x>a)(b)""#, r#""i""#),
+        (r#""abc""#, r#""b""#, "null"),
+        (r#""abc""#, r#""z""#, "null"),
+        (r#""a\nb""#, r#""^(?<x>b)$""#, r#""g""#),
+        (r#""a\nb""#, r#""^(?<x>b)$""#, r#""s""#),
+        (r#""a\nb""#, r#""(?<x>a.b)""#, r#""m""#),
+        (r#""a\nb""#, r#""^(?<x>a.b)$""#, r#""p""#),
+        (r#""ab""#, r#""(?<x>a b)""#, r#""x""#),
+        (r#""ab""#, r#""[""#, "null"),
+        (r#""ab""#, r#""a""#, r#""invalid""#),
+    ] {
+        let capture = format!("[capture({pattern}; {flags})]");
+        let legacy = format!(
+            "[match({pattern}; {flags}) | reduce (.captures[] | select(.name != null)) as $c ({{}}; . + {{($c.name): $c.string}})]"
+        );
+        assert_eq!(run(&capture, input), run(&legacy, input), "{capture}");
+        let test = format!("test({pattern}; {flags})");
+        let legacy = format!("[match({pattern}; {flags})] | length > 0");
+        assert_eq!(run(&test, input), run(&legacy, input), "{test}");
+    }
+}
+
+#[test]
+fn string_accumulation_preserves_shared_inputs_and_generator_snapshots() {
+    for (source, expected) in [
+        (r#"[. as $saved | (. + "x"), $saved]"#, r#"["abx","ab"]"#),
+        (r#"[(., .) + ("x", "y")]"#, r#"["abx","abx","aby","aby"]"#),
+        (
+            r#"[foreach range(3) as $i (. ; . + "x"; .)]"#,
+            r#"["abx","abxx","abxxx"]"#,
+        ),
+        (r#"[., (. + .), .]"#, r#"["ab","abab","ab"]"#),
+        (
+            r#"[reduce range(10000) as $i (""; . + "x") | length]"#,
+            "[10000]",
+        ),
+    ] {
+        assert_eq!(
+            run(source, r#""ab""#).unwrap(),
+            vec![data::parse_json_str(expected).unwrap()],
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn constant_infix_matches_dynamic_operands_and_recovery() {
+    // Binding the right operand forces the general stack-based call path.
+    // Compare it with the literal path across values, generators and errors.
+    for op in ["+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">="] {
+        for (input, right) in [
+            ("17", "3"),
+            ("-17", "3"),
+            ("17", "0"),
+            ("9007199254740993", "9007199254740992"),
+            ("1.5", "0.5"),
+            ("null", "null"),
+            ("true", "false"),
+            (r#""ab""#, r#""b""#),
+            ("[1,2]", "null"),
+            (r#"{"a":1}"#, "null"),
+        ] {
+            let optimized = format!("[try ((., .) {op} {right}) catch .]");
+            let general = format!("{right} as $rhs | [try ((., .) {op} $rhs) catch .]");
+            assert_eq!(
+                run(&optimized, input),
+                run(&general, input),
+                "{optimized}: {input}"
+            );
+        }
+    }
+    for (source, input, expected) in [
+        ("[(empty, 1, 2) + 3]", "null", "[4,5]"),
+        (
+            r#"[try ((1, error("stop"), 2) + 3) catch .]"#,
+            "null",
+            r#"[4,"stop"]"#,
+        ),
+        (
+            "[. as $saved | (. + null), $saved]",
+            "[1,2]",
+            "[[1,2],[1,2]]",
+        ),
+        ("[(. + null), path(.a)]", r#"{"a":1}"#, r#"[{"a":1},["a"]]"#),
+        (
+            "[try path(.a + 0) catch .]",
+            r#"{"a":1}"#,
+            r#"["Invalid path expression with result 1"]"#,
+        ),
+        ("[(1,2) - (10,20)]", "null", "[-9,-8,-19,-18]"),
+    ] {
+        assert_eq!(
+            run(source, input).unwrap(),
+            vec![data::parse_json_str(expected).unwrap()],
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn direct_builtin_dispatch_preserves_argument_order_and_owned_values() {
     for (source, input, expected) in [
         ("[(10,20) - (1,2)]", "null", "[9,19,8,18]"),

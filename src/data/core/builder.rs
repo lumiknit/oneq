@@ -153,11 +153,10 @@ where
                     };
                     let StreamItem { path, value } = event;
                     let boundary = is_document_boundary(&path, value.is_some());
-                    if let Some(value) = value {
-                        match current.set_path(&path, value) {
-                            Ok(v) => *current = v,
-                            Err(e) => return Some(Err(e)),
-                        }
+                    if let Some(value) = value
+                        && let Err(e) = current.set_path_mut(&path, value)
+                    {
+                        return Some(Err(e));
                     }
                     if boundary {
                         return Some(Ok(std::mem::replace(current, Value::Null)));

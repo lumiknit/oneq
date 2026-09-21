@@ -28,6 +28,14 @@ macro_rules! dispatch {
                     if !instr.is_infix_operator() { args.reverse(); }
                     self.operands.pop().unwrap().value
                 };
+                self.apply_builtin(instr, input, args, host)
+            }
+
+            #[inline]
+            fn apply_builtin<const N: usize>(
+                &mut self, instr: BuiltinInstr, input: Value, args: &mut [Value; N],
+                host: &mut dyn Host,
+            ) -> Result<Option<VmEvent>, JqError> {
                 match instr {
                     $(BuiltinInstr::$variant => {
                         self.input.value = builtins::$module::$function(&input, args)?;
@@ -101,6 +109,19 @@ macro_rules! dispatch {
 builtins::scalar_instructions!(dispatch);
 
 impl Vm {
+    #[inline]
+    pub(super) fn step_infix_const(
+        &mut self,
+        op: BuiltinOp2,
+        right: &Value,
+        host: &mut dyn Host,
+    ) -> Result<Option<VmEvent>, JqError> {
+        debug_assert!(op.0.is_infix_operator());
+        self.input.path = None;
+        let mut args = [std::mem::take(&mut self.input.value), right.clone()];
+        self.apply_builtin(op.0, Value::Null, &mut args, host)
+    }
+
     #[inline]
     pub(super) fn step_builtin0(
         &mut self,

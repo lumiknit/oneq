@@ -55,13 +55,16 @@ impl<T, const N: usize> Stack<T, N> {
         self.len
     }
 
-    /// Keep a unique empty chunk available across checkpoint restoration.
+    /// Reuse a uniquely owned chunk when restoring an empty checkpoint.
+    /// Clear both its values and history so scratch space retains no operands.
     pub fn restore(&mut self, saved: Self) {
-        if self.len == 0
-            && saved.len == 0
+        if saved.len == 0
             && let Some(node) = self.head.as_mut().and_then(Rc::get_mut)
         {
             node.truncate(0);
+            node.previous = Self::default();
+            self.used = 0;
+            self.len = 0;
         } else {
             *self = saved;
         }
@@ -293,6 +296,37 @@ mod tests {
         assert!(stack.head.is_none());
         assert_eq!(saved.len(), 1);
         assert!(Rc::ptr_eq(saved.last().unwrap(), &payload));
+    }
+
+    #[test]
+    fn restoring_empty_reuses_a_nonempty_chunk_and_releases_history() {
+        let payload = Rc::new(());
+        let mut stack: Stack<_, 2> = (0..5).map(|_| payload.clone()).collect();
+        let head = Rc::as_ptr(stack.head.as_ref().unwrap());
+        stack.restore(Stack::default());
+        assert_eq!(Rc::strong_count(&payload), 1);
+        assert_eq!(stack.len(), 0);
+        assert_eq!(stack.last(), None);
+        assert_eq!(stack.iter().count(), 0);
+        // Repeated nonempty restores must keep the same allocation.
+        for _ in 0..100 {
+            stack.push(payload.clone());
+            assert_eq!(Rc::as_ptr(stack.head.as_ref().unwrap()), head);
+            stack.restore(Stack::default());
+            assert_eq!(Rc::strong_count(&payload), 1);
+        }
+    }
+
+    #[test]
+    fn restoring_empty_does_not_clear_a_shared_nonempty_chunk() {
+        let mut stack: Stack<_, 2> = (0..5).collect();
+        let saved = stack.clone();
+        stack.restore(Stack::default());
+        stack.push(99);
+        assert_eq!(stack.to_vec(), [99]);
+        assert_eq!(saved.to_vec(), [0, 1, 2, 3, 4]);
+        stack.restore(saved);
+        assert_eq!(stack.to_vec(), [0, 1, 2, 3, 4]);
     }
 
     #[test]
