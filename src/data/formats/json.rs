@@ -616,23 +616,29 @@ impl<'a> JsonParser<'a> {
         }
 
         let mut idx: ArrayIndex = 0;
-        let mut last_child_path = None;
+        // Only the *last* child's index is needed for the close event, so
+        // remember that rather than keeping a clone of its whole path.
+        let mut last_child_idx = None;
         loop {
             self.skip_ws()?;
             let mut child_path = path.clone();
             child_path.push(PathItem::new_idx(idx));
-            if self.parse_value(child_path.clone())? {
+            if self.parse_value(child_path)? {
+                last_child_idx = Some(idx);
                 idx += 1;
-                last_child_path = Some(child_path);
             }
             if self.consume_separator(']')? {
                 break;
             }
         }
 
-        self.queue.push_back(match last_child_path {
-            Some(lp) => StreamItem {
-                path: lp,
+        self.queue.push_back(match last_child_idx {
+            Some(li) => StreamItem {
+                path: {
+                    let mut lp = path;
+                    lp.push(PathItem::new_idx(li));
+                    lp
+                },
                 value: None,
             },
             // every element was `undefined` - the array is effectively empty.
@@ -656,7 +662,9 @@ impl<'a> JsonParser<'a> {
             return Ok(());
         }
 
-        let mut last_child_path = None;
+        // As in `parse_array`: the close event only needs the last child's
+        // key, not a second copy of its path.
+        let mut last_child_key = None;
         loop {
             self.skip_ws()?;
             let key = self.parse_key()?;
@@ -669,19 +677,24 @@ impl<'a> JsonParser<'a> {
             }
             self.skip_ws()?;
 
+            let item = PathItem::new_key_str(&key);
             let mut child_path = path.clone();
-            child_path.push(PathItem::new_key_str(&key));
-            if self.parse_value(child_path.clone())? {
-                last_child_path = Some(child_path);
+            child_path.push(item);
+            if self.parse_value(child_path)? {
+                last_child_key = Some(item);
             }
             if self.consume_separator('}')? {
                 break;
             }
         }
 
-        self.queue.push_back(match last_child_path {
-            Some(lp) => StreamItem {
-                path: lp,
+        self.queue.push_back(match last_child_key {
+            Some(lk) => StreamItem {
+                path: {
+                    let mut lp = path;
+                    lp.push(lk);
+                    lp
+                },
                 value: None,
             },
             // every member's value was `undefined` - the object is effectively empty.

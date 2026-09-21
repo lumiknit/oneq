@@ -10,15 +10,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+type RegexCache = HashMap<String, HashMap<String, Rc<::regex::Regex>>>;
 thread_local! {
-    /// Compiling a Rust regex is far costlier than running it once compiled;
-    /// jq call sites like `sub`/`gsub`/`capture` recompile the same pattern on
-    /// every input row, so cache by (pattern, flags) to amortize that cost.
-    static REGEX_CACHE: RefCell<HashMap<(String, String), ::regex::Regex>> =
+    /// Reuse both the compiled pattern and its search scratch pool. Cloning
+    /// Regex creates a fresh pool; cloning Rc keeps that pool warm across rows.
+    /// Nested maps also allow allocation-free lookups using borrowed strings.
+    static REGEX_CACHE: RefCell<RegexCache> =
         RefCell::new(HashMap::new());
 }
 
-fn compile(args: &[Value]) -> Result<(::regex::Regex, bool, bool), JqError> {
+fn compile(args: &[Value]) -> Result<(Rc<::regex::Regex>, bool, bool), JqError> {
     let pattern = string(&args[0])?;
     let flags = match args.get(1) {
         None | Some(Value::Null) => "",
@@ -29,10 +30,9 @@ fn compile(args: &[Value]) -> Result<(::regex::Regex, bool, bool), JqError> {
             return Err(error(format!("unsupported Rust regex flag: {flag}")));
         }
     }
-    let regex = REGEX_CACHE.with(|cache| -> Result<::regex::Regex, JqError> {
+    let regex = REGEX_CACHE.with(|cache| -> Result<Rc<::regex::Regex>, JqError> {
         let mut cache = cache.borrow_mut();
-        let key = (pattern.to_string(), flags.to_string());
-        if let Some(regex) = cache.get(&key) {
+        if let Some(regex) = cache.get(pattern).and_then(|patterns| patterns.get(flags)) {
             return Ok(regex.clone());
         }
         let regex = ::regex::RegexBuilder::new(pattern)
@@ -42,7 +42,11 @@ fn compile(args: &[Value]) -> Result<(::regex::Regex, bool, bool), JqError> {
             .ignore_whitespace(flags.contains('x'))
             .build()
             .map_err(|e| error(format!("Rust regex: {e}")))?;
-        cache.insert(key, regex.clone());
+        let regex = Rc::new(regex);
+        cache
+            .entry(pattern.to_owned())
+            .or_default()
+            .insert(flags.to_owned(), regex.clone());
         Ok(regex)
     })?;
     Ok((regex, flags.contains('g'), flags.contains('n')))
@@ -72,7 +76,7 @@ fn record(text: &str, found: Option<::regex::Match<'_>>, name: Option<&str>) -> 
     ));
     object(fields)
 }
-pub(crate) fn matches(input: &Value, args: &[Value]) -> Result<Vec<Value>, JqError> {
+fn matches(input: &Value, args: &[Value], capture_only: bool) -> Result<Vec<Value>, JqError> {
     let text = string(input)?;
     let (regex, global, no_empty) = compile(args)?;
     let names: Vec<_> = regex.capture_names().collect();
@@ -80,6 +84,30 @@ pub(crate) fn matches(input: &Value, args: &[Value]) -> Result<Vec<Value>, JqErr
     for captures in regex.captures_iter(text) {
         let matched = captures.get(0).unwrap();
         if no_empty && matched.is_empty() {
+            continue;
+        }
+        if capture_only {
+            // capture() only needs named substrings, not match records,
+            // character offsets, lengths, or a jq reduction over those records.
+            let fields = names
+                .iter()
+                .enumerate()
+                .filter_map(|(i, name)| {
+                    name.map(|name| {
+                        (
+                            strs::intern(name),
+                            captures
+                                .get(i)
+                                .map(|m| Value::String(m.as_str().to_owned().into()))
+                                .unwrap_or(Value::Null),
+                        )
+                    })
+                })
+                .collect();
+            result.push(Value::Object(Rc::new(fields)));
+            if !global {
+                break;
+            }
             continue;
         }
         let items = (1..captures.len())
@@ -107,10 +135,39 @@ pub(crate) fn matches(input: &Value, args: &[Value]) -> Result<Vec<Value>, JqErr
 /// boolean (as `test` wants) and the full match-record array (as `match` wants).
 pub(crate) fn match_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let testmode = matches!(args.get(2), Some(Value::Bool(true)));
-    let found = matches(input, &args[..2])?;
     if testmode {
-        Ok(Value::Bool(!found.is_empty()))
+        let text = string(input)?;
+        let (regex, _, no_empty) = compile(&args[..2])?;
+        Ok(Value::Bool(if no_empty {
+            regex.find_iter(text).any(|m| !m.is_empty())
+        } else {
+            regex.is_match(text)
+        }))
     } else {
-        Ok(Value::Array(Rc::new(found)))
+        Ok(Value::Array(Rc::new(matches(input, &args[..2], false)?)))
+    }
+}
+
+pub(crate) fn capture_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+    Ok(Value::Array(Rc::new(matches(input, args, true)?)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_hits_share_the_search_pool_and_keep_flags_distinct() {
+        let pattern = Value::String("cache_probe".to_string().into());
+        let plain = [pattern.clone(), Value::Null];
+        let first = compile(&plain).unwrap().0;
+        assert!(first.is_match("cache_probe"));
+        assert!(Rc::ptr_eq(&first, &compile(&plain).unwrap().0));
+        let insensitive = compile(&[pattern, Value::String("i".to_string().into())])
+            .unwrap()
+            .0;
+        assert!(!Rc::ptr_eq(&first, &insensitive));
+        assert!(!first.is_match("CACHE_PROBE"));
+        assert!(insensitive.is_match("CACHE_PROBE"));
     }
 }

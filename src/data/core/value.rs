@@ -165,6 +165,52 @@ impl Value {
         Ok(current)
     }
 
+    /// In-place version of `set_path`: mutates through `Rc::make_mut`, so a
+    /// uniquely-owned tree (the usual case while a `ValueBuilder` is folding
+    /// one document together) is updated without copying its containers.
+    /// `set_path` clones every container along the path, which makes building
+    /// an N-element document out of N leaf events quadratic; this is O(depth).
+    pub fn set_path_mut(&mut self, path: &[PathItem], value: Value) -> Result<(), DataError> {
+        let Some((head, rest)) = path.split_first() else {
+            *self = value;
+            return Ok(());
+        };
+
+        let (i, is_key) = head.unpack();
+
+        if is_key {
+            if matches!(self, Value::Null) {
+                *self = Value::Object(Rc::new(IndexMap::new()));
+            }
+            match self {
+                Value::Object(obj) => {
+                    let entries = Rc::make_mut(obj);
+                    entries.entry(i).or_insert(Value::Null).set_path_mut(rest, value)
+                }
+                other => Err(DataError::UnexpectedObjectKeyType {
+                    index_type: other.type_name(),
+                }),
+            }
+        } else {
+            if matches!(self, Value::Null) {
+                *self = Value::Array(Rc::new(Vec::new()));
+            }
+            match self {
+                Value::Array(arr) => {
+                    let items = Rc::make_mut(arr);
+                    let idx = resolve_index(i, items.len())?;
+                    if items.len() <= idx {
+                        items.resize(idx + 1, Value::Null);
+                    }
+                    items[idx].set_path_mut(rest, value)
+                }
+                other => Err(DataError::UnexpectedArrayIndexType {
+                    index_type: other.type_name(),
+                }),
+            }
+        }
+    }
+
     /// Return new Value with the value at path set to value.
     /// If the path does not exists, it'll try to create array/object as needed.
     /// If index is invalid (wrong type or out of bounds), it'll return Err.

@@ -63,7 +63,12 @@ pub(crate) fn add_owned(args: &mut [Value]) -> Result<Value, JqError> {
         // precision (verified against real jq: `13911860366432393 - 10` is
         // `13911860366432382`, i.e. the literal rounds to the nearest
         // double *before* subtracting, not exact-bigint-minus-10).
-        (Value::String(a), Value::String(b)) => Value::String(format!("{a}{b}").into()),
+        (Value::String(mut a), Value::String(b)) => {
+            // Reuse a unique accumulator; saved bindings and continuations
+            // still force a copy through the same COW rule as arrays.
+            Rc::make_mut(&mut a).push_str(&b);
+            Value::String(a)
+        }
         (Value::Array(mut a), Value::Array(b)) => {
             Rc::make_mut(&mut a).extend(b.iter().cloned());
             Value::Array(a)

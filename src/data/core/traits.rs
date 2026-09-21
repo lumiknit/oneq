@@ -33,12 +33,18 @@ pub struct CharReader<'a> {
     /// Bytes read but not yet decoded into `chars` - only ever a partial
     /// UTF-8 sequence left over at a chunk boundary.
     pending_bytes: Vec<u8>,
-    /// Every character decoded so far. Grows on demand via `ensure`;
-    /// never trimmed, so indices already handed out by a caller (e.g. a
-    /// token's start position) stay valid.
+    /// Decoded characters not yet consumed, plus whatever lookahead
+    /// `ensure` has pulled in. Consumed characters are dropped once
+    /// `pos` passes `COMPACT_THRESHOLD`, so a large input doesn't keep
+    /// the whole decoded document (4 bytes per character) resident.
     chars: Vec<char>,
     pos: usize,
 }
+
+/// How many consumed characters may pile up in `chars` before `ensure`
+/// drops them. Parsing only ever looks a character or two ahead, so the
+/// retained tail is tiny and the periodic `drain` is O(1) amortized.
+const COMPACT_THRESHOLD: usize = 4096;
 
 impl<'a> CharReader<'a> {
     /// No bytes are read here - `new` can't fail and doesn't block; each
@@ -56,10 +62,6 @@ impl<'a> CharReader<'a> {
         }
     }
 
-    pub fn pos(&self) -> usize {
-        self.pos
-    }
-
     /// Takes the pending read error, if any - call this when hitting an
     /// unexpected EOF, so the real cause (rather than a generic "end of
     /// input") gets surfaced.
@@ -72,6 +74,10 @@ impl<'a> CharReader<'a> {
     /// small chunks so a blocking source only blocks for data that's
     /// actually needed, not the whole input.
     fn ensure(&mut self, want: usize) {
+        if self.pos >= COMPACT_THRESHOLD {
+            self.chars.drain(..self.pos);
+            self.pos = 0;
+        }
         while !self.eof && self.chars.len() < self.pos + want {
             let mut chunk = [0u8; 256];
             match self.reader.read(&mut chunk) {
@@ -144,10 +150,6 @@ impl<'a> CharReader<'a> {
         c
     }
 
-    pub fn advance(&mut self, n: usize) {
-        self.pos += n;
-    }
-
     /// Character-by-character, so a mismatch on the very first character
     /// doesn't force blocking for lookahead as far out as `s` is long.
     pub fn starts_with(&mut self, s: &str) -> bool {
@@ -160,9 +162,4 @@ impl<'a> CharReader<'a> {
         true
     }
 
-    /// The characters at `[start, self.pos)` - both must be positions
-    /// already produced by `peek`/`bump` on this reader.
-    pub fn slice(&self, start: usize) -> String {
-        self.chars[start..self.pos].iter().collect()
-    }
 }

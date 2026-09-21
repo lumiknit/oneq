@@ -41,6 +41,25 @@ case conversion, splitting and fixed-pattern capture/replace). Run on an idle ma
 or tests competing with the measured processes. The release profile uses
 `opt-level = 3`, fat LTO and one codegen unit.
 
+## Literal infix benchmark
+
+`vm/arithmetic-constant.jq` reproduces the 8-million-iteration workload in
+`c.sh`, without depending on macOS `sample`. Its expected output is
+`3840307999912`. Infix operations with a literal right operand now keep that
+operand in bytecode and consume the left result directly. For example,
+`$i * 3` uses two VM instructions instead of eight, avoiding temporary
+operand stack entries, clones and reference-count updates. Operators retain
+the existing scalar implementations, including Decimal comparison and
+floating-point arithmetic semantics.
+
+On Linux aarch64, three alternating before/after release runs gave a median
+of 5.551 s before this change and 2.524 s after (2.20x, 54.5% less time).
+The baseline already includes empty-stack chunk reuse. This is a runtime
+improvement, not a claim of fewer heap allocations: a separate libc allocation
+probe on 100,000 iterations found almost unchanged malloc-family counts.
+Short queries can still be slower by about 1–2 ms including compilation;
+measure your own workload with the comparison command above.
+
 ## Runtime allocation measurements
 
 ```sh

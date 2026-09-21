@@ -428,6 +428,20 @@ fn emit_expr(
             code.push(Instruction::MakeObject(pairs.len()));
         }
         Expr::BuiltinCall { builtin, args } => {
+            let instr = crate::jq::builtins::spec(*builtin).instr;
+            if instr.is_infix_operator()
+                && let Expr::Literal(literal) = &ir.nodes[args[1].0].expr
+            {
+                let right = match literal {
+                    Literal::Value(value) => value.clone(),
+                    Literal::Number(raw) => data::parse_json_str(raw).map_err(CompileError)?,
+                };
+                // A literal yields once and has no effects. Keep it in code,
+                // even when the left operand yields, errors, or suspends.
+                emit_expr(ir, args[0], code, slots)?;
+                code.push(Instruction::InfixConst(instr.op2(), right));
+                return Ok(());
+            }
             // Ordinary multi-arg calls (including 2-arg natives like
             // `range(a;b)`) nest left-to-right: the leftmost arg is the
             // outer loop (varies slowest), matching plain jq-defined
@@ -456,7 +470,6 @@ fn emit_expr(
                 emit_expr(ir, args[idx], code, slots)?;
                 code.push(Instruction::Push);
             }
-            let instr = crate::jq::builtins::spec(*builtin).instr;
             code.push(match args.len() {
                 0 => Instruction::BuiltinCall0(instr.op0()),
                 1 => Instruction::BuiltinCall1(instr.op1()),

@@ -27,6 +27,25 @@ pub(crate) fn explode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
         input.chars().map(|c| Value::int(c as i64)).collect(),
     )))
 }
+pub(crate) fn ascii_downcase(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+    let Value::String(s) = input else {
+        // Preserve the error from the former explode/map/implode definition.
+        return Err(error("explode input must be a string"));
+    };
+    if !s.bytes().any(|b| b.is_ascii_uppercase()) {
+        return Ok(input.clone());
+    }
+    Ok(Value::String(s.to_ascii_lowercase().into()))
+}
+pub(crate) fn ascii_upcase(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+    let Value::String(s) = input else {
+        return Err(error("explode input must be a string"));
+    };
+    if !s.bytes().any(|b| b.is_ascii_lowercase()) {
+        return Ok(input.clone());
+    }
+    Ok(Value::String(s.to_ascii_uppercase().into()))
+}
 pub(crate) fn implode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::Array(a) = input else {
         return Err(error("implode input must be an array"));

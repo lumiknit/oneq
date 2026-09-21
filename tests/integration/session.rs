@@ -232,6 +232,30 @@ fn suspended_execution_matches_iterator_and_strings_count_code_points() {
     );
 }
 #[test]
+fn constant_infix_resumes_inside_generator_and_preserves_input_consumption() {
+    let mut session = Session::new();
+    let entry = append(&mut session, "[(range(0;3) + 10), (input * 3), input]");
+    let inputs = vec![number(7), number(8)];
+    let mut host = InputHost::new(inputs.into_iter().map(Ok));
+    let mut run = session.run(entry, &mut host, InputMode::Null).unwrap();
+    let mut actual = vec![];
+    loop {
+        match run.resume(1) {
+            VmEvent::Output(value) => actual.push(value),
+            VmEvent::Suspended => {}
+            VmEvent::Done => break,
+            _ => panic!("unexpected event"),
+        }
+    }
+    assert_eq!(
+        actual,
+        vec![Value::Array(std::rc::Rc::new(
+            [10, 11, 12, 21, 8].into_iter().map(number).collect()
+        ))]
+    );
+}
+
+#[test]
 fn suspended_ranges_preserve_nested_recovery_and_termination() {
     let mut session = Session::new();
     let entry = append(
