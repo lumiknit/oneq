@@ -191,7 +191,29 @@ macro_rules! define_instructions {
 }
 scalar_instructions!(define_instructions);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BuiltinOp0(pub BuiltinInstr);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BuiltinOp1(pub BuiltinInstr);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BuiltinOp2(pub BuiltinInstr);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BuiltinOp3(pub BuiltinInstr);
+
 impl BuiltinInstr {
+    pub const fn op0(self) -> BuiltinOp0 {
+        BuiltinOp0(self)
+    }
+    pub const fn op1(self) -> BuiltinOp1 {
+        BuiltinOp1(self)
+    }
+    pub const fn op2(self) -> BuiltinOp2 {
+        BuiltinOp2(self)
+    }
+    pub const fn op3(self) -> BuiltinOp3 {
+        BuiltinOp3(self)
+    }
+
     pub const fn is_infix_operator(self) -> bool {
         matches!(
             self,

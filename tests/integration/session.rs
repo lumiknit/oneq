@@ -232,6 +232,40 @@ fn suspended_execution_matches_iterator_and_strings_count_code_points() {
     );
 }
 #[test]
+fn suspended_ranges_preserve_nested_recovery_and_termination() {
+    let mut session = Session::new();
+    let entry = append(
+        &mut session,
+        "range(0;3) | try (range(0;3) | if . == 1 then error else . end) catch .",
+    );
+    let expected = output(&mut session, entry, vec![Value::Null]);
+    assert_eq!(
+        expected,
+        vec![
+            number(0),
+            number(1),
+            number(0),
+            number(1),
+            number(0),
+            number(1)
+        ]
+    );
+    let mut host = InputHost::new(std::iter::empty());
+    let mut run = session.run(entry, &mut host, InputMode::Null).unwrap();
+    let mut actual = vec![];
+    loop {
+        match run.resume(1) {
+            VmEvent::Output(value) => actual.push(value),
+            VmEvent::Suspended => {}
+            VmEvent::Done => break,
+            _ => panic!("unexpected event"),
+        }
+    }
+    assert_eq!(actual, expected);
+    assert_eq!(run.outcome(), Some(&RunOutcome::Complete));
+}
+
+#[test]
 fn registry_signatures_docs_and_calc_recipes_are_consistent() {
     let mut signatures = std::collections::HashSet::new();
     for spec in builtins::registry() {

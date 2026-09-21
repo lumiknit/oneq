@@ -14,8 +14,8 @@ pub enum ParamMode {
     Filter,
 }
 mod instr;
-pub use instr::BuiltinInstr;
 pub(crate) use instr::scalar_instructions;
+pub use instr::{BuiltinInstr, BuiltinOp0, BuiltinOp1, BuiltinOp2, BuiltinOp3};
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BuiltinEffects {
     pub may_empty: bool,
@@ -542,6 +542,18 @@ pub enum NativeEvent {
     Done,
 }
 
+/// Range advancement is infallible after argument validation. Share the
+/// floating-point termination rule with the VM's backtracking path.
+pub(crate) fn range_next(next: &mut f64, end: f64, step: f64) -> Option<Value> {
+    if (step > 0.0 && *next < end) || (step < 0.0 && *next > end) {
+        let value = *next;
+        *next += step;
+        Some(Value::Float(value))
+    } else {
+        None
+    }
+}
+
 impl NativeState {
     pub fn resume(
         &mut self,
@@ -557,15 +569,9 @@ impl NativeState {
                     Ok(NativeEvent::Done)
                 }
             }
-            Self::Range { next, end, step } => {
-                if (*step > 0.0 && *next < *end) || (*step < 0.0 && *next > *end) {
-                    let value = *next;
-                    *next += *step;
-                    Ok(NativeEvent::Output(Value::Float(value)))
-                } else {
-                    Ok(NativeEvent::Done)
-                }
-            }
+            Self::Range { next, end, step } => Ok(range_next(next, *end, *step)
+                .map(NativeEvent::Output)
+                .unwrap_or(NativeEvent::Done)),
         }
     }
 

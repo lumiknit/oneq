@@ -443,7 +443,9 @@ fn emit_expr(
             // Either way, each arg's code sees the original input, and
             // `BuiltinCall` restores source order from its LIFO pops
             // regardless of which order we pushed in.
-            code.push(Instruction::Push);
+            if !args.is_empty() {
+                code.push(Instruction::Push);
+            }
             let order: Vec<usize> = if crate::jq::builtins::spec(*builtin).is_infix_operator() {
                 (0..args.len()).rev().collect()
             } else {
@@ -454,9 +456,14 @@ fn emit_expr(
                 emit_expr(ir, args[idx], code, slots)?;
                 code.push(Instruction::Push);
             }
-            code.push(Instruction::BuiltinCall(
-                crate::jq::builtins::spec(*builtin).instr,
-            ));
+            let instr = crate::jq::builtins::spec(*builtin).instr;
+            code.push(match args.len() {
+                0 => Instruction::BuiltinCall0(instr.op0()),
+                1 => Instruction::BuiltinCall1(instr.op1()),
+                2 => Instruction::BuiltinCall2(instr.op2()),
+                3 => Instruction::BuiltinCall3(instr.op3()),
+                _ => return Err(CompileError("builtin arity exceeds VM limit".into())),
+            });
         }
     }
     Ok(())

@@ -6,7 +6,18 @@ use crate::{
     jq::vm::{JqError, value::error},
     strs,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
+
+thread_local! {
+    /// Compiling a Rust regex is far costlier than running it once compiled;
+    /// jq call sites like `sub`/`gsub`/`capture` recompile the same pattern on
+    /// every input row, so cache by (pattern, flags) to amortize that cost.
+    static REGEX_CACHE: RefCell<HashMap<(String, String), ::regex::Regex>> =
+        RefCell::new(HashMap::new());
+}
+
 fn compile(args: &[Value]) -> Result<(::regex::Regex, bool, bool), JqError> {
     let pattern = string(&args[0])?;
     let flags = match args.get(1) {
@@ -18,13 +29,22 @@ fn compile(args: &[Value]) -> Result<(::regex::Regex, bool, bool), JqError> {
             return Err(error(format!("unsupported Rust regex flag: {flag}")));
         }
     }
-    let regex = ::regex::RegexBuilder::new(pattern)
-        .case_insensitive(flags.contains('i'))
-        .multi_line(!flags.contains('s') && !flags.contains('p'))
-        .dot_matches_new_line(flags.contains('m') || flags.contains('p'))
-        .ignore_whitespace(flags.contains('x'))
-        .build()
-        .map_err(|e| error(format!("Rust regex: {e}")))?;
+    let regex = REGEX_CACHE.with(|cache| -> Result<::regex::Regex, JqError> {
+        let mut cache = cache.borrow_mut();
+        let key = (pattern.to_string(), flags.to_string());
+        if let Some(regex) = cache.get(&key) {
+            return Ok(regex.clone());
+        }
+        let regex = ::regex::RegexBuilder::new(pattern)
+            .case_insensitive(flags.contains('i'))
+            .multi_line(!flags.contains('s') && !flags.contains('p'))
+            .dot_matches_new_line(flags.contains('m') || flags.contains('p'))
+            .ignore_whitespace(flags.contains('x'))
+            .build()
+            .map_err(|e| error(format!("Rust regex: {e}")))?;
+        cache.insert(key, regex.clone());
+        Ok(regex)
+    })?;
     Ok((regex, flags.contains('g'), flags.contains('n')))
 }
 fn object(fields: impl IntoIterator<Item = (&'static str, Value)>) -> Value {

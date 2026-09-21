@@ -102,15 +102,15 @@ impl<'a> YamlParser<'a> {
         };
         let indent = p.lines.first().map_or(0, |x| x.indent);
         let mut path = Vec::new();
-        let value = p.node_eager(indent, &mut path, &mut self.queue)?;
+        // A `<<` merge key may stream a leaf that a later explicit key of
+        // the same name then overrides - both events stay in `queue`, in
+        // order, and the `Default` builder's `set_path` already applies
+        // them last-write-wins, so the merged-in leaf doesn't need to be
+        // un-streamed or the whole value re-derived to "fix" it.
+        p.node_eager(indent, &mut path, &mut self.queue)?;
         if p.pos != p.lines.len() {
             return Err(p.err("unexpected YAML content"));
         }
-        // A later explicit key can replace a merged subtree. Successful
-        // documents must stream the resolved value, not obsolete merge leaves.
-        // On errors, keep the partial events produced above for --stream-errors.
-        self.queue.clear();
-        super::document::events(value, &mut path, &mut self.queue);
         Ok(())
     }
 }
@@ -135,6 +135,17 @@ impl<'a> Iterator for YamlParser<'a> {
     }
 }
 impl<'a> Parser for YamlParser<'a> {}
+
+/// Streams a value that `text_value` just resolved in one shot (a scalar,
+/// flow `[]`/`{}`, block scalar, or alias - never something built up
+/// incrementally through `queue`) as a single event, rather than
+/// re-decomposing it leaf-by-leaf through `document::events`.
+fn emit(v: &Value, path: &[PathItem], queue: &mut VecDeque<StreamItem>) {
+    queue.push_back(StreamItem {
+        path: path.to_vec(),
+        value: Some(v.clone()),
+    });
+}
 
 struct Reader<'a> {
     lines: Vec<Line>,
@@ -259,11 +270,11 @@ impl Reader<'_> {
         queue: &mut VecDeque<StreamItem>,
     ) -> Result<Value, DataError> {
         let Some(l) = self.lines.get(self.pos).cloned() else {
-            super::document::events(Value::Null, path, queue);
+            emit(&Value::Null, path, queue);
             return Ok(Value::Null);
         };
         if l.indent < indent {
-            super::document::events(Value::Null, path, queue);
+            emit(&Value::Null, path, queue);
             return Ok(Value::Null);
         }
         if l.indent != indent {
@@ -276,7 +287,7 @@ impl Reader<'_> {
         } else {
             self.pos += 1;
             let v = self.text_value(&l.text, indent)?;
-            super::document::events(v.clone(), path, queue);
+            emit(&v, path, queue);
             Ok(v)
         }
     }
@@ -307,7 +318,7 @@ impl Reader<'_> {
                 self.map_first(indent + 2, s, path, queue)?
             } else {
                 let v = self.text_value(s, indent + 2)?;
-                super::document::events(v.clone(), path, queue);
+                emit(&v, path, queue);
                 v
             };
             path.pop();
@@ -392,7 +403,7 @@ impl Reader<'_> {
                 self.child_eager(indent, path, queue)?
             } else {
                 let v = self.text_value(r.trim(), indent + 2)?;
-                super::document::events(v.clone(), path, queue);
+                emit(&v, path, queue);
                 v
             };
             path.pop();
@@ -420,15 +431,15 @@ impl Reader<'_> {
         queue: &mut VecDeque<StreamItem>,
     ) -> Result<Value, DataError> {
         let Some(l) = self.lines.get(self.pos) else {
-            super::document::events(Value::Null, path, queue);
+            emit(&Value::Null, path, queue);
             return Ok(Value::Null);
         };
         if l.indent < parent {
-            super::document::events(Value::Null, path, queue);
+            emit(&Value::Null, path, queue);
             return Ok(Value::Null);
         }
         if l.indent == parent && !(l.text == "-" || l.text.starts_with("- ")) {
-            super::document::events(Value::Null, path, queue);
+            emit(&Value::Null, path, queue);
             return Ok(Value::Null);
         }
         let indent = l.indent;
@@ -494,7 +505,7 @@ impl Reader<'_> {
                 if !m.contains_key(k) {
                     m.insert(*k, v.clone());
                     path.push(PathItem::new_key(*k));
-                    super::document::events(v.clone(), path, queue);
+                    emit(v, path, queue);
                     path.pop();
                 }
             }
@@ -531,7 +542,8 @@ impl Reader<'_> {
         } else if s.is_empty() {
             self.child(indent.saturating_sub(2))?
         } else if s.starts_with('|') || s.starts_with('>') {
-            self.block(indent.saturating_sub(2), s.starts_with('>'))?
+            let strip = s[1..].contains('-');
+            self.block(indent.saturating_sub(2), s.starts_with('>'), strip)?
         } else if s == "-" || s.starts_with("- ") {
             self.inline_seq(s)?
         } else if s.starts_with('[') || s.starts_with('{') {
@@ -552,7 +564,7 @@ impl Reader<'_> {
         }
         Ok(v)
     }
-    fn block(&mut self, parent: usize, fold: bool) -> Result<Value, DataError> {
+    fn block(&mut self, parent: usize, fold: bool, strip: bool) -> Result<Value, DataError> {
         let mut a = Vec::new();
         while let Some(x) = self.lines.get(self.pos).cloned() {
             if x.indent <= parent {
@@ -562,7 +574,7 @@ impl Reader<'_> {
             a.push(x.text)
         }
         let mut s = if fold { a.join(" ") } else { a.join("\n") };
-        if !fold {
+        if !fold && !strip {
             s.push('\n')
         }
         Ok(Value::String(s.into()))
@@ -870,6 +882,64 @@ fn write_scalar(o: &mut String, v: &Value, x: &render::Options) {
     }
     super::json::write_value(o, v, x, 0, super::json::KeywordPreset::YAML);
 }
+/// Whether `s` can be written as a literal block scalar (`|`/`|-`) and read
+/// back byte-for-byte. This reader strips each content line's own leading
+/// whitespace into its per-line indent (losing any indentation relative to
+/// its siblings) and drops blank lines outright while lexing, so any line
+/// with its own leading/trailing whitespace, an empty line, or a `#`
+/// comment can't round-trip through a block scalar. A `+` ("keep") chomping
+/// indicator would be needed for 2+ trailing newlines, but the same
+/// blank-line-dropping lexer can't preserve an exact count, so that case
+/// isn't attempted either - such strings just fall back to a quoted scalar.
+fn yaml_block_scalar(s: &str) -> Option<(&'static str, Vec<&str>)> {
+    if !s.contains('\n') {
+        return None;
+    }
+    let body = s.trim_end_matches('\n');
+    let trailing = s.len() - body.len();
+    if trailing >= 2 || body.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = body.split('\n').collect();
+    for &line in &lines {
+        if line.is_empty()
+            || line.starts_with([' ', '\t'])
+            || line.ends_with([' ', '\t'])
+            || strip_comment(line) != line
+        {
+            return None;
+        }
+    }
+    let header = if trailing == 0 { "|-" } else { "|" };
+    Some((header, lines))
+}
+/// Writes `v` as an inline scalar value (preceded by `' '` if `lead_space`)
+/// followed by `'\n'`, using a literal block scalar instead of a quoted
+/// string when `yaml_block_scalar` says it's safe to round-trip.
+fn write_scalar_value(o: &mut String, v: &Value, x: &render::Options, d: usize, i: &str, lead_space: bool) {
+    if let Value::String(s) = v
+        && x.out.compact_level == render::CompactLevel::Pretty
+        && let Some((header, lines)) = yaml_block_scalar(s)
+    {
+        if lead_space {
+            o.push(' ');
+        }
+        o.push_str(header);
+        o.push('\n');
+        let child = i.repeat(d + 1);
+        for line in lines {
+            o.push_str(&child);
+            o.push_str(line);
+            o.push('\n');
+        }
+        return;
+    }
+    if lead_space {
+        o.push(' ');
+    }
+    write_scalar(o, v, x);
+    o.push('\n');
+}
 fn write_block(o: &mut String, v: &Value, x: &render::Options, d: usize) {
     let i = if x.out.indent.is_empty() || !x.out.indent.chars().all(|c| c == ' ') {
         "  "
@@ -889,9 +959,7 @@ fn write_block(o: &mut String, v: &Value, x: &render::Options, d: usize) {
                     let child_indent = i.repeat(d + 1);
                     o.push_str(child.strip_prefix(&child_indent).unwrap_or(&child));
                 } else {
-                    o.push(' ');
-                    write_scalar(o, z, x);
-                    o.push('\n')
+                    write_scalar_value(o, z, x, d, i, true);
                 }
             }
         }
@@ -909,16 +977,13 @@ fn write_block(o: &mut String, v: &Value, x: &render::Options, d: usize) {
                     o.push('\n');
                     write_block(o, z, x, d + 1)
                 } else {
-                    o.push(' ');
-                    write_scalar(o, z, x);
-                    o.push('\n')
+                    write_scalar_value(o, z, x, d, i, true);
                 }
             }
         }
         _ => {
             o.push_str(&p);
-            write_scalar(o, v, x);
-            o.push('\n');
+            write_scalar_value(o, v, x, d, i, false);
         }
     }
 }
@@ -929,10 +994,10 @@ impl Serializer for YamlSerializer {
         }
         let mut o = String::new();
         if self.emitted {
-            if self.options.out.doc_end.is_none() {
-                o.push_str("---\n")
+            if self.options.out.compact_level == render::CompactLevel::Pretty {
+                o.push_str("\n---\n\n")
             } else {
-                o.push_str("\n---\n")
+                o.push_str("---\n")
             }
         } else if let Some(s) = self.options.out.doc_begin {
             o.push_str(s)

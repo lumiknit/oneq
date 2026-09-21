@@ -55,6 +55,18 @@ impl<T, const N: usize> Stack<T, N> {
         self.len
     }
 
+    /// Keep a unique empty chunk available across checkpoint restoration.
+    pub fn restore(&mut self, saved: Self) {
+        if self.len == 0
+            && saved.len == 0
+            && let Some(node) = self.head.as_mut().and_then(Rc::get_mut)
+        {
+            node.truncate(0);
+        } else {
+            *self = saved;
+        }
+    }
+
     pub fn push(&mut self, value: T) {
         const {
             assert!(N > 0);
@@ -159,14 +171,15 @@ impl<T: Clone, const N: usize> Stack<T, N> {
         values
     }
 
-    pub fn remove_first(&mut self, predicate: impl Fn(&T) -> bool) -> Option<T> {
+    /// Discard the matching item without cloning it from a shared checkpoint.
+    pub fn remove_first(&mut self, predicate: impl Fn(&T) -> bool) -> Option<()> {
         let depth = self.iter().position(predicate)?;
         let above = self.split_off(self.len - depth);
-        let removed = self.pop();
+        self.truncate(self.len - 1);
         for value in above {
             self.push(value);
         }
-        removed
+        Some(())
     }
 }
 
@@ -240,7 +253,7 @@ mod tests {
     fn branches_and_middle_removal_preserve_saved_history() {
         let mut stack: Stack<_> = (0..6).collect();
         let saved = stack.clone();
-        assert_eq!(stack.remove_first(|x| *x == 3), Some(3));
+        assert_eq!(stack.remove_first(|x| *x == 3), Some(()));
         assert_eq!(stack.to_vec(), [0, 1, 2, 4, 5]);
         stack.truncate(2);
         stack.push(9);
@@ -249,6 +262,37 @@ mod tests {
         assert_eq!(stack[1], 1);
         assert_eq!(stack.split_off(1), [1, 9]);
         assert_eq!(stack.to_vec(), [0]);
+    }
+
+    #[test]
+    fn discarding_a_shared_top_does_not_clone_it() {
+        let clones = Rc::new(Cell::new(0));
+        let mut stack: Stack<_, 1> = [Counted(clones.clone())].into_iter().collect();
+        let saved = stack.clone();
+        assert_eq!(stack.remove_first(|_| true), Some(()));
+        assert_eq!(clones.get(), 0);
+        assert_eq!(saved.len(), 1);
+    }
+
+    #[test]
+    fn restoring_empty_reuses_only_unique_chunks_and_drops_stale_values() {
+        let payload = Rc::new(Cell::new(0));
+        let mut stack: Stack<_, 1> = [payload.clone()].into_iter().collect();
+        let saved = stack.clone();
+        stack.truncate(0);
+        let head = Rc::as_ptr(stack.head.as_ref().unwrap());
+        drop(saved);
+        stack.restore(Stack::default());
+        assert_eq!(Rc::strong_count(&payload), 1);
+        stack.push(payload.clone());
+        assert_eq!(Rc::as_ptr(stack.head.as_ref().unwrap()), head);
+
+        let saved = stack.clone();
+        stack.truncate(0);
+        stack.restore(Stack::default());
+        assert!(stack.head.is_none());
+        assert_eq!(saved.len(), 1);
+        assert!(Rc::ptr_eq(saved.last().unwrap(), &payload));
     }
 
     #[test]

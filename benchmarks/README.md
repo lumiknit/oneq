@@ -32,8 +32,12 @@ short cases have a significant fixed cost. `--set` can be repeated to select
 case directories; defaults are `benchmarks/set` and `benchmarks/vm`.
 
 The VM cases cover full array iteration, abandoning iteration after the first
-item, nested recovery handlers and path tracking. The ordinary suite also covers
-recursion, arithmetic and native streams. Run on an idle machine without builds
+item, nested recovery handlers and path tracking. `try-shared` exercises a try
+handler retained by a generator continuation before a later error; `range-nested`
+exercises repeated inner range creation, backtracking and exhaustion without
+output serialization. The ordinary suite also covers
+recursion, arithmetic, native streams, and string/regex processing (trimming,
+case conversion, splitting and fixed-pattern capture/replace). Run on an idle machine without builds
 or tests competing with the measured processes. The release profile uses
 `opt-level = 3`, fat LTO and one codegen unit.
 

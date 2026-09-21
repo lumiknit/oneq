@@ -9,7 +9,7 @@ pub(crate) mod value;
 
 use crate::jq::ir::{BindingId, FunctionId};
 use crate::{data::Value, jq::compiler::calc::CalcContext, strs};
-use frame::{ChoicePoint, Closure, Frame, Handler, ReturnFrame, SlotValue};
+use frame::{ChoicePoint, Closure, Frame, Handler, Operand, ReturnFrame, SlotValue};
 use host::Host;
 use std::{collections::HashMap, rc::Rc};
 
@@ -35,41 +35,23 @@ mod recovery_tests {
 
     #[test]
     fn frame_reuse_does_not_mutate_saved_bindings() {
-        let mut vm = Vm::start(0, false, Value::Null, Frame::default());
+        let mut vm = Vm::start(0, Value::Null, Frame::default());
         let root = vm.snapshot(0);
-        vm.bind(
-            0,
-            SlotValue::Local {
-                value: Value::Float(1.0),
-                path: None,
-            },
-        );
+        vm.bind(0, SlotValue::Local(Value::Float(1.0).into()));
         let saved = vm.snapshot(1);
-        vm.bind(
-            0,
-            SlotValue::Local {
-                value: Value::Float(2.0),
-                path: None,
-            },
-        );
+        vm.bind(0, SlotValue::Local(Value::Float(2.0).into()));
         let reusable = Rc::as_ptr(&vm.frame);
         vm.restore(root);
         assert_eq!(vm.spare_frames.len(), 1);
-        vm.bind(
-            0,
-            SlotValue::Local {
-                value: Value::Float(3.0),
-                path: None,
-            },
-        );
+        vm.bind(0, SlotValue::Local(Value::Float(3.0).into()));
         assert_eq!(Rc::as_ptr(&vm.frame), reusable);
         vm.restore(saved);
         assert!(matches!(
             vm.frame.get(0),
-            Some(SlotValue::Local {
+            Some(SlotValue::Local(Operand {
                 value: Value::Float(1.0),
                 ..
-            })
+            }))
         ));
         assert!(
             vm.spare_frames
@@ -79,22 +61,24 @@ mod recovery_tests {
     }
 
     #[test]
-    fn iteration_keeps_only_one_pending_choice_and_skips_unused_paths() {
+    fn iteration_keeps_only_one_pending_choice_and_skips_lost_paths() {
         let input = Value::Array(Rc::new(
             (0..100_000).map(|i| Value::Float(i as f64)).collect(),
         ));
-        let mut vm = Vm::start(0, false, input, Frame::default());
+        let mut vm = Vm::start(0, input, Frame::default());
+        // Value-producing instructions can invalidate the current path.
+        vm.input.path = None;
         vm.advance_iteration(0).unwrap();
         for index in 1..100_000 {
             assert_eq!(vm.choices.len(), 1);
-            assert!(vm.path.is_none());
+            assert!(vm.input.path.is_none());
             vm.backtrack();
             let next = vm.iteration.take().unwrap();
             assert_eq!(next, index);
             vm.advance_iteration(next).unwrap();
         }
         assert!(vm.choices.is_empty());
-        assert_eq!(vm.input, Value::Float(99_999.0));
+        assert_eq!(vm.input.value, Value::Float(99_999.0));
     }
 }
 impl JqError {
@@ -145,15 +129,13 @@ pub(crate) struct Vm {
     alternatives: Stack<Rc<std::cell::Cell<bool>>>,
     pub(crate) exports: HashMap<BindingId, Value>,
     pub(crate) exported_functions: HashMap<FunctionId, Rc<Closure>>,
-    input: Value,
+    input: Operand,
     frame: Rc<Frame>,
     /// Only unpublished, uniquely owned frames enter this bounded reuse pool.
     /// It is allocation scratch space, never part of a continuation.
     spare_frames: Vec<Rc<Frame>>,
     choices: Vec<ChoicePoint>,
-    operands: Stack<Value>,
-    path: Option<Stack<Value>>,
-    operand_paths: Stack<Option<Stack<Value>>>,
+    operands: Stack<Operand>,
     /// Nesting depth of `BeginPath`/`EndPath` (i.e. `path(...)`, `=`, `|=`, ...).
     /// Outside any such context a lost path is silently harmless (the value
     /// keeps evaluating normally), but inside one it must surface jq's
@@ -198,11 +180,13 @@ impl Vm {
         Rc::get_mut(&mut frame).unwrap().slots[0] = Some(value);
         self.frame = frame;
     }
-    pub(crate) fn start(chunk: usize, tracks_paths: bool, input: Value, frame: Frame) -> Self {
+    pub(crate) fn start(chunk: usize, input: Value, frame: Frame) -> Self {
         Self {
             chunk,
-            path: tracks_paths.then(Stack::default),
-            input,
+            input: Operand {
+                value: input,
+                path: Some(Stack::default()),
+            },
             frame: Rc::new(frame),
             ..Self::default()
         }
@@ -222,8 +206,6 @@ impl Vm {
             input: self.input.clone(),
             frame: self.frame.clone(),
             operands: self.operands.clone(),
-            path: self.path.clone(),
-            operand_paths: self.operand_paths.clone(),
             path_depth: self.path_depth,
             path_depth_stack: self.path_depth_stack.clone(),
         }
@@ -238,7 +220,7 @@ impl Vm {
                 let mut point = self.snapshot(self.pc);
                 point.native = Some(state);
                 self.choices.push(point);
-                self.input = value;
+                self.input.value = value;
             }
             NativeEvent::Done => self.backtrack(),
             NativeEvent::Callback { .. } => {
@@ -250,15 +232,15 @@ impl Vm {
     /// Keep one continuation per iterator, regardless of collection size.
     /// The saved input owns the original collection while downstream code runs.
     fn advance_iteration(&mut self, index: usize) -> Result<(), JqError> {
-        let (item, key, len) = match &self.input {
+        let (item, key, len) = match &self.input.value {
             Value::Array(values) => (
                 values.get(index).cloned(),
-                self.path.as_ref().map(|_| Value::int(index as i64)),
+                self.input.path.as_ref().map(|_| Value::int(index as i64)),
                 values.len(),
             ),
             Value::Object(values) => (
                 values.get_index(index).map(|(_, value)| value.clone()),
-                self.path.as_ref().and_then(|_| {
+                self.input.path.as_ref().and_then(|_| {
                     values.get_index(index).map(|(key, _)| {
                         Value::String(strs::resolve(*key).unwrap_or("").to_string().into())
                     })
@@ -269,8 +251,8 @@ impl Vm {
                 return Err(JqError::Runtime(Value::String(
                     format!(
                         "Cannot iterate over {} ({})",
-                        self.input.type_name(),
-                        value::truncated_repr(&self.input)
+                        self.input.value.type_name(),
+                        value::truncated_repr(&self.input.value)
                     )
                     .into(),
                 )));
@@ -282,8 +264,8 @@ impl Vm {
                 point.iteration = Some(index + 1);
                 self.choices.push(point);
             }
-            self.input = item;
-            if let (Some(path), Some(key)) = (&mut self.path, key) {
+            self.input.value = item;
+            if let (Some(path), Some(key)) = (&mut self.input.path, key) {
                 path.push(key);
             }
         } else {
@@ -299,11 +281,9 @@ impl Vm {
         let previous = std::mem::replace(&mut self.frame, point.frame);
         self.recycle_frame(previous);
         self.operands = point.operands;
-        self.path = point.path;
-        self.operand_paths = point.operand_paths;
         self.path_depth = point.path_depth;
         self.path_depth_stack = point.path_depth_stack;
-        self.handlers = point.handlers;
+        self.handlers.restore(point.handlers);
         self.folds = point.folds;
         self.labels = point.labels;
         self.native = point.native;
@@ -311,9 +291,25 @@ impl Vm {
         self.alternatives = point.alternatives;
     }
     fn backtrack(&mut self) {
-        while let Some(point) = self.choices.pop() {
+        while let Some(mut point) = self.choices.pop() {
             if point.skip_if.as_ref().is_some_and(|flag| flag.get()) {
                 continue;
+            }
+            if let Some(crate::jq::builtins::NativeState::Range { next, end, step }) =
+                &mut point.native
+            {
+                let Some(value) = crate::jq::builtins::range_next(next, *end, *step) else {
+                    continue;
+                };
+                // Restore without cloning the large continuation. Re-snapshot only after restore.
+                let native = point.native.take();
+                self.restore(point);
+                let mut continuation = self.snapshot(self.pc);
+                continuation.native = native;
+                self.choices.push(continuation);
+                self.native = None;
+                self.input.value = value;
+                return;
             }
             self.restore(point);
             return;
@@ -326,18 +322,6 @@ impl Vm {
         host: &mut dyn Host,
         budget: &mut usize,
     ) -> VmEvent {
-        if program.tracks_paths {
-            self.resume_inner::<LIMITED, true>(program, host, budget)
-        } else {
-            self.resume_inner::<LIMITED, false>(program, host, budget)
-        }
-    }
-    fn resume_inner<const LIMITED: bool, const PATH: bool>(
-        &mut self,
-        program: &code::Program,
-        host: &mut dyn Host,
-        budget: &mut usize,
-    ) -> VmEvent {
         while !LIMITED || *budget > 0 {
             if self.done {
                 return VmEvent::Done;
@@ -345,7 +329,7 @@ impl Vm {
             if LIMITED {
                 *budget -= 1;
             }
-            match self.step::<PATH>(program, host) {
+            match self.step(program, host) {
                 Ok(Some(event)) => return event,
                 Ok(None) => {}
                 Err(error) => {
@@ -354,8 +338,8 @@ impl Vm {
                     {
                         self.choices.truncate(handler.choices);
                         self.collect.truncate(handler.collections);
-                        self.restore(*handler.recovery);
-                        self.input = payload.clone();
+                        self.restore(Rc::unwrap_or_clone(handler.recovery));
+                        self.input.value = payload.clone();
                         continue;
                     }
                     self.done = true;
@@ -365,7 +349,7 @@ impl Vm {
         }
         VmEvent::Suspended
     }
-    fn step<const PATH: bool>(
+    fn step(
         &mut self,
         program: &code::Program,
         host: &mut dyn Host,
@@ -387,118 +371,115 @@ impl Vm {
         self.pc += 1;
         match instruction {
             Instruction::Load(value) => {
-                self.input = value.clone();
-                self.path = None;
+                self.input = value.clone().into();
             }
             Instruction::SuspendPath => {
-                if PATH {
-                    self.path_depth_stack.push(self.path_depth);
-                }
+                self.path_depth_stack.push(self.path_depth);
                 self.path_depth = 0;
             }
             Instruction::ResumePath => {
                 self.path_depth = self.path_depth_stack.pop().unwrap_or(0);
             }
             Instruction::BeginPath => {
-                self.path = Some(Stack::default());
+                self.input.path = Some(Stack::default());
                 self.path_depth += 1;
             }
             Instruction::EndPath => {
                 self.path_depth = self.path_depth.saturating_sub(1);
-                let path = self.path.take().ok_or_else(|| {
+                let path = self.input.path.take().ok_or_else(|| {
                     value::error(format!(
                         "Invalid path expression with result {}",
-                        &self.input.to_compact_json()
+                        &self.input.value.to_compact_json()
                     ))
                 })?;
-                self.input = Value::Array(Rc::new(path.to_vec()));
+                self.input.value = Value::Array(Rc::new(path.to_vec()));
             }
             Instruction::Read(binding) => {
-                let Some(SlotValue::Local { value, path }) = self.frame.get(*binding) else {
+                let Some(SlotValue::Local(operand)) = self.frame.get(*binding) else {
                     return Err(JqError::Uninitialized);
                 };
-                self.input = value.clone();
-                self.path = path.as_ref().map(|path| path.iter().cloned().collect());
+                self.input = operand.clone();
             }
             Instruction::Drop => {
-                self.operand_paths.pop();
-                self.operands
-                    .pop()
+                let remaining = self
+                    .operands
+                    .len()
+                    .checked_sub(1)
                     .ok_or_else(|| JqError::InvalidCode("operand underflow".into()))?;
+                self.operands.truncate(remaining);
             }
             Instruction::Index => {
                 let base = self
                     .operands
                     .pop()
                     .ok_or_else(|| JqError::InvalidCode("index input missing".into()))?;
-                let base_path = self.operand_paths.pop().flatten();
+                let Operand {
+                    value: base,
+                    path: base_path,
+                } = base;
                 if base_path.is_none() && self.path_depth > 0 {
                     return Err(value::error(format!(
                         "Invalid path expression near attempt to access element {} of {}",
-                        &self.input.to_compact_json(),
+                        &self.input.value.to_compact_json(),
                         &base.to_compact_json()
                     )));
                 }
-                self.path = base_path;
-                if let Some(path) = &mut self.path {
-                    path.push(self.input.clone());
+                self.input.path = base_path;
+                if let Some(path) = &mut self.input.path {
+                    path.push(self.input.value.clone());
                 }
-                self.input = value::index(&base, &self.input)?;
+                self.input.value = value::index(&base, &self.input.value)?;
             }
             Instruction::Slice => {
                 let start = self
                     .operands
                     .pop()
-                    .ok_or_else(|| JqError::InvalidCode("slice start missing".into()))?;
+                    .ok_or_else(|| JqError::InvalidCode("slice start missing".into()))?
+                    .value;
                 let base = self
                     .operands
                     .pop()
                     .ok_or_else(|| JqError::InvalidCode("slice input missing".into()))?;
-                self.operand_paths.pop();
-                let base_path = self.operand_paths.pop().flatten();
+                let Operand {
+                    value: base,
+                    path: base_path,
+                } = base;
                 if base_path.is_none() && self.path_depth > 0 {
                     let mut bounds = indexmap::IndexMap::new();
                     bounds.insert(strs::keyword_start(), start.clone());
-                    bounds.insert(strs::keyword_end(), self.input.clone());
+                    bounds.insert(strs::keyword_end(), self.input.value.clone());
                     return Err(value::error(format!(
                         "Invalid path expression near attempt to access element {} of {}",
                         &Value::Object(Rc::new(bounds)).to_compact_json(),
                         base.to_compact_json()
                     )));
                 }
-                self.path = base_path;
-                if let Some(path) = &mut self.path {
+                self.input.path = base_path;
+                if let Some(path) = &mut self.input.path {
                     let mut bounds = indexmap::IndexMap::new();
                     bounds.insert(strs::keyword_start(), start.clone());
-                    bounds.insert(strs::keyword_end(), self.input.clone());
+                    bounds.insert(strs::keyword_end(), self.input.value.clone());
                     path.push(Value::Object(Rc::new(bounds)));
                 }
-                self.input = value::slice(&base, &start, &self.input)?;
+                self.input.value = value::slice(&base, &start, &self.input.value)?;
             }
             Instruction::Iterate => {
-                if self.path.is_none() && self.path_depth > 0 {
+                if self.input.path.is_none() && self.path_depth > 0 {
                     return Err(value::error(format!(
                         "Invalid path expression near attempt to iterate through {}",
-                        &self.input.to_compact_json()
+                        &self.input.value.to_compact_json()
                     )));
                 }
                 self.advance_iteration(0)?;
             }
 
             Instruction::Bind { slot, export } => {
-                self.bind(
-                    *slot,
-                    SlotValue::Local {
-                        value: self.input.clone(),
-                        path: self.path.as_ref().map(Stack::to_vec),
-                    },
-                );
+                self.bind(*slot, SlotValue::Local(self.input.clone()));
                 if let Some(id) = export {
-                    self.exports.insert(*id, self.input.clone());
+                    self.exports.insert(*id, self.input.value.clone());
                 }
             }
             Instruction::Pop => {
-                self.path = self.operand_paths.pop().flatten();
                 self.input = self
                     .operands
                     .pop()
@@ -603,14 +584,14 @@ impl Vm {
                     *label,
                     Handler {
                         destructure: false,
-                        recovery: Box::new(self.snapshot(self.pc)),
+                        recovery: Rc::new(self.snapshot(self.pc)),
                         choices: self.choices.len(),
                         collections: self.collect.len(),
                     },
                 ));
             }
             Instruction::EndLabel => {
-                self.labels.pop();
+                self.labels.truncate(self.labels.len().saturating_sub(1));
             }
             Instruction::Break(label) => {
                 let handler = self
@@ -621,12 +602,12 @@ impl Vm {
                     .ok_or_else(|| JqError::InvalidCode("inactive label".into()))?;
                 self.choices.truncate(handler.choices);
                 self.collect.truncate(handler.collections);
-                self.restore(*handler.recovery);
+                self.restore(Rc::unwrap_or_clone(handler.recovery));
                 self.backtrack();
             }
             Instruction::BeginFold(pc) => {
                 self.folds
-                    .push(Rc::new(std::cell::RefCell::new(self.input.clone())));
+                    .push(Rc::new(std::cell::RefCell::new(self.input.value.clone())));
                 self.choices.push(self.snapshot(*pc));
             }
             Instruction::FoldLoad => {
@@ -634,14 +615,14 @@ impl Vm {
                     .folds
                     .last()
                     .ok_or_else(|| JqError::InvalidCode("fold underflow".into()))?;
-                self.input = fold.replace(Value::Null);
+                self.input.value = fold.replace(Value::Null);
             }
             Instruction::FoldStore => {
                 let fold = self
                     .folds
                     .last()
                     .ok_or_else(|| JqError::InvalidCode("fold underflow".into()))?;
-                fold.replace(self.input.clone());
+                fold.replace(self.input.value.clone());
             }
             Instruction::DropFold => {
                 self.folds.pop();
@@ -651,12 +632,12 @@ impl Vm {
                     .folds
                     .pop()
                     .ok_or_else(|| JqError::InvalidCode("fold underflow".into()))?;
-                self.input = fold.borrow().clone();
+                self.input.value = fold.borrow().clone();
             }
             Instruction::BeginTry(pc) | Instruction::BeginDestructure(pc) => {
                 self.handlers.push(Handler {
                     destructure: matches!(instruction, Instruction::BeginDestructure(_)),
-                    recovery: Box::new(self.snapshot(*pc)),
+                    recovery: Rc::new(self.snapshot(*pc)),
                     choices: self.choices.len(),
                     collections: self.collect.len(),
                 });
@@ -680,22 +661,19 @@ impl Vm {
                     .alternatives
                     .pop()
                     .ok_or_else(|| JqError::InvalidCode("missing alternative region".into()))?;
-                if matches!(self.input, Value::Null | Value::Bool(false)) {
+                if matches!(self.input.value, Value::Null | Value::Bool(false)) {
                     self.backtrack();
                 } else {
                     flag.set(true);
                 }
             }
             Instruction::JumpFalse(pc) => {
-                if matches!(self.input, Value::Null | Value::Bool(false)) {
+                if matches!(self.input.value, Value::Null | Value::Bool(false)) {
                     self.pc = *pc;
                 }
             }
             Instruction::Push => {
                 self.operands.push(self.input.clone());
-                if PATH {
-                    self.operand_paths.push(self.path.clone());
-                }
             }
             Instruction::LoadSaved(depth) => {
                 let index = self
@@ -704,21 +682,18 @@ impl Vm {
                     .checked_sub(depth + 1)
                     .ok_or_else(|| JqError::InvalidCode("operand underflow".into()))?;
                 self.input = self.operands[index].clone();
-                if PATH {
-                    self.path = self.operand_paths[index].clone();
-                }
             }
             Instruction::Fork(pc) => self.choices.push(self.snapshot(*pc)),
             Instruction::Jump(pc) => self.pc = *pc,
             Instruction::Backtrack => self.backtrack(),
-            Instruction::Yield => return Ok(Some(VmEvent::Output(self.input.clone()))),
+            Instruction::Yield => return Ok(Some(VmEvent::Output(self.input.value.clone()))),
             Instruction::RunCalc(index) => {
                 let program = chunk
                     .calc
                     .get(*index)
                     .ok_or_else(|| JqError::InvalidCode("unknown calc program".into()))?;
                 match program.run(&mut self.calc)? {
-                    crate::jq::compiler::calc::CalcResult::Value(value) => self.input = value,
+                    crate::jq::compiler::calc::CalcResult::Value(value) => self.input.value = value,
                     crate::jq::compiler::calc::CalcResult::Empty => self.backtrack(),
                 }
             }
@@ -730,23 +705,20 @@ impl Vm {
                 self.collect
                     .last_mut()
                     .ok_or_else(|| JqError::InvalidCode("collect stack underflow".into()))?
-                    .push(self.input.clone());
+                    .push(self.input.value.clone());
             }
             Instruction::EndCollect => {
                 let values = self
                     .collect
                     .pop()
                     .ok_or_else(|| JqError::InvalidCode("collect stack underflow".into()))?;
-                self.input = Value::Array(std::rc::Rc::new(values));
-                self.path = None;
+                self.input = Value::Array(Rc::new(values)).into();
             }
             Instruction::MakeObject(pairs) => {
                 if self.operands.len() < pairs * 2 + 1 {
                     return Err(JqError::InvalidCode("missing object fields".into()));
                 }
-                self.operand_paths
-                    .truncate(self.operands.len() - pairs * 2 - 1);
-                self.path = None;
+                self.input.path = None;
                 let fields = self.operands.split_off(self.operands.len() - pairs * 2);
                 self.operands
                     .pop()
@@ -754,16 +726,19 @@ impl Vm {
                 let mut map = indexmap::IndexMap::new();
                 for chunk in fields.chunks(2) {
                     let [key, value] = chunk else { unreachable!() };
-                    let Value::String(key) = key else {
+                    let Value::String(key) = &key.value else {
                         return Err(JqError::Runtime(Value::String(
                             "Object keys must be strings".to_string().into(),
                         )));
                     };
-                    map.insert(strs::intern(key), value.clone());
+                    map.insert(strs::intern(key), value.value.clone());
                 }
-                self.input = Value::Object(std::rc::Rc::new(map));
+                self.input.value = Value::Object(std::rc::Rc::new(map));
             }
-            Instruction::BuiltinCall(instr) => return self.step_builtin::<PATH>(*instr, host),
+            Instruction::BuiltinCall0(instr) => return self.step_builtin0(*instr, host),
+            Instruction::BuiltinCall1(instr) => return self.step_builtin1(*instr, host),
+            Instruction::BuiltinCall2(instr) => return self.step_builtin2(*instr, host),
+            Instruction::BuiltinCall3(instr) => return self.step_builtin3(*instr, host),
         }
         Ok(None)
     }
