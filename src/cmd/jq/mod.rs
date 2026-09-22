@@ -96,6 +96,7 @@ pub(crate) fn safe_run(args: &flags::Args) -> anyhow::Result<i32> {
         );
         return Ok(0);
     }
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     if opt.in_place {
         anyhow::ensure!(
             !opt.files.is_empty(),
