@@ -42,7 +42,8 @@ impl BuiltinSpec {
     /// varying slowest - jq's own compiler (`gen_binop`) nests these with
     /// the *right* operand outer instead, so `(1,2)+(10,20)` yields
     /// `11,12,21,22` rather than `11,21,12,22`.
-    pub fn is_infix_operator(&self) -> bool {
+    #[must_use]
+    pub const fn is_infix_operator(&self) -> bool {
         self.instr.is_infix_operator()
     }
 }
@@ -111,7 +112,8 @@ macro_rules! scalar_spec {
     };
 }
 
-pub fn registry() -> &'static [BuiltinSpec] {
+#[must_use]
+pub const fn registry() -> &'static [BuiltinSpec] {
     &[
         scalar_spec!("acos", [], Acos),
         scalar_spec!("acosh", [], Acosh),
@@ -512,11 +514,13 @@ fn index() -> &'static std::collections::HashMap<(crate::strs::Symbol, usize), B
     })
 }
 
+#[must_use]
 pub fn lookup_symbol(name: crate::strs::Symbol, arity: usize) -> Option<BuiltinId> {
     index().get(&(name, arity)).copied()
 }
 
-pub fn spec(id: BuiltinId) -> &'static BuiltinSpec {
+#[must_use]
+pub const fn spec(id: BuiltinId) -> &'static BuiltinSpec {
     &registry()[id.0]
 }
 
@@ -535,7 +539,7 @@ pub enum NativeState {
     },
 }
 
-pub(crate) fn range() -> NativeState {
+pub(crate) const fn range() -> NativeState {
     NativeState::Range {
         next: 0.0,
         end: 0.0,
@@ -576,9 +580,9 @@ impl NativeState {
                     Ok(NativeEvent::Done)
                 }
             }
-            Self::Range { next, end, step } => Ok(range_next(next, *end, *step)
-                .map(NativeEvent::Output)
-                .unwrap_or(NativeEvent::Done)),
+            Self::Range { next, end, step } => {
+                Ok(range_next(next, *end, *step).map_or(NativeEvent::Done, NativeEvent::Output))
+            }
         }
     }
 
@@ -601,7 +605,7 @@ impl NativeState {
                 } else {
                     scalar::number(&args[0])?
                 };
-                *end = scalar::number(&args[if args.len() == 1 { 0 } else { 1 }])?;
+                *end = scalar::number(&args[usize::from(args.len() != 1)])?;
                 *step = if args.len() == 3 {
                     scalar::number(&args[2])?
                 } else {

@@ -186,6 +186,7 @@ impl Session {
         let summary = compiler::analyze::analyze_summary(&chunk.ir, chunk.entry);
         Ok(summary.observations.may_add_input || !summary.finite)
     }
+    #[must_use]
     pub fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             owner: self.owner,
@@ -250,13 +251,16 @@ impl Session {
     /// Deterministic arena order makes this useful before a pretty IR printer exists.
     pub fn dump(&self, entry: EntryId) -> Result<String, JqError> {
         let chunk = &self.program.chunks[self.chunk(entry)?];
+        use std::fmt::Write as _;
         Ok(chunk
             .ir
             .nodes
             .iter()
             .enumerate()
-            .map(|(i, n)| format!("e{i}: {:?}\n", n.expr))
-            .collect())
+            .fold(String::new(), |mut acc, (i, n)| {
+                let _ = writeln!(acc, "e{i}: {:?}", n.expr);
+                acc
+            }))
     }
 
     /// Render only the optimized entry expression, without the arena/function
@@ -303,13 +307,15 @@ pub struct Execution<'a> {
 impl Execution<'_> {
     /// CLI policy: a runtime error ends this input, then the next input starts.
     /// The REPL retains the default transaction-wide error behavior.
-    pub fn continue_after_error(&mut self) {
+    pub const fn continue_after_error(&mut self) {
         self.continue_after_error = true;
     }
-    pub fn input_status(&self) -> (bool, Option<bool>) {
+    #[must_use]
+    pub const fn input_status(&self) -> (bool, Option<bool>) {
         (self.input_error, self.last_output)
     }
-    pub fn outcome(&self) -> Option<&RunOutcome> {
+    #[must_use]
+    pub const fn outcome(&self) -> Option<&RunOutcome> {
         self.outcome.as_ref()
     }
     pub fn cancel(&mut self) {
@@ -402,7 +408,7 @@ impl Execution<'_> {
                                     .collect(),
                                 parent: None,
                             },
-                        ))
+                        ));
                     }
                     Some(Err(error)) => {
                         self.outcome = Some(RunOutcome::Error);

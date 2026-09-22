@@ -1,5 +1,5 @@
 //! Static module metadata, independent of the not-yet-complete filter compiler.
-use super::*;
+use super::{CompileError, FileSet, Pair, PairTag, PathBuf, Rc, Value, data, strs};
 
 pub(super) fn object(pair: &Pair, files: &FileSet) -> Result<Value, CompileError> {
     let value = constant(pair, files)?;

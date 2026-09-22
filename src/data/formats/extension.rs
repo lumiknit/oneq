@@ -1,6 +1,7 @@
 use super::DataFormat;
 
 /// Returns the input format implied by a file extension.
+#[must_use]
 pub fn from_extension(path: &str) -> Option<DataFormat> {
     let extension = std::path::Path::new(path)
         .extension()?

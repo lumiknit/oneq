@@ -1,16 +1,23 @@
 //! Closed function templates. Names resolve through Symbols; templates use stable
-//! FunctionIds so aliases, shadowing and REPL rollback share the same resolution.
+//! `FunctionIds` so aliases, shadowing and REPL rollback share the same resolution.
 use super::rewrite::{self, Item, Mapper};
-use crate::jq::{ir::*, parser::pairs::SpanPos, symbols::Symbols};
+use crate::jq::{
+    ir::{
+        BindingId, CallTarget, Expr, ExprId, FunctionDef, FunctionId, Ir, LabelId, Pattern,
+        PatternId,
+    },
+    parser::pairs::SpanPos,
+    symbols::Symbols,
+};
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
 };
 
-pub(crate) type TemplateStore = HashMap<FunctionId, Rc<ExprTemplate>>;
+pub type TemplateStore = HashMap<FunctionId, Rc<ExprTemplate>>;
 
 #[derive(Debug)]
-pub(crate) struct ExprTemplate {
+pub struct ExprTemplate {
     fragment: Fragment,
     params: Vec<BindingId>,
 }
@@ -153,19 +160,18 @@ fn copy(
                     target: CallTarget::FilterParameter(param),
                     args,
                 } = &node.expr
+                    && let Some(argument) = substitutions.get(param)
                 {
-                    if let Some(argument) = substitutions.get(param) {
-                        debug_assert!(args.is_empty());
-                        let copied = copy(
-                            &argument.ir,
-                            argument.root,
-                            output,
-                            symbols.as_deref_mut(),
-                            &HashMap::new(),
-                        );
-                        map.exprs.insert(id, copied);
-                        continue;
-                    }
+                    debug_assert!(args.is_empty());
+                    let copied = copy(
+                        &argument.ir,
+                        argument.root,
+                        output,
+                        symbols.as_deref_mut(),
+                        &HashMap::new(),
+                    );
+                    map.exprs.insert(id, copied);
+                    continue;
                 }
                 let mut expr = node.expr.clone();
                 rewrite::map_expr(&mut expr, &mut map);
@@ -344,12 +350,10 @@ fn live_functions(ir: &Ir, entry: ExprId) -> HashSet<FunctionId> {
                 target: CallTarget::Function(id),
                 ..
             } = ir.nodes[id.0].expr
+                && live.insert(id)
+                && let Some(body) = bodies.get(&id)
             {
-                if live.insert(id)
-                    && let Some(body) = bodies.get(&id)
-                {
-                    pending.push(*body);
-                }
+                pending.push(*body);
             }
         }
     }
@@ -385,36 +389,35 @@ fn optimize_tree(
             target: CallTarget::Function(function),
             args,
         } = &node.expr
+            && let Some(template) = templates.get(function)
         {
-            if let Some(template) = templates.get(function) {
-                let substitutions: HashMap<_, _> = template
-                    .params
-                    .iter()
-                    .copied()
-                    .zip(args.iter().map(|arg| Fragment::capture(ir, *arg)))
-                    .collect();
-                let mut cost = template.fragment.cost();
-                for node in &template.fragment.ir.nodes {
-                    if let Expr::Call {
-                        target: CallTarget::FilterParameter(param),
-                        ..
-                    } = &node.expr
-                    {
-                        cost = cost.saturating_add(substitutions[param].cost());
-                    }
+            let substitutions: HashMap<_, _> = template
+                .params
+                .iter()
+                .copied()
+                .zip(args.iter().map(|arg| Fragment::capture(ir, *arg)))
+                .collect();
+            let mut cost = template.fragment.cost();
+            for node in &template.fragment.ir.nodes {
+                if let Expr::Call {
+                    target: CallTarget::FilterParameter(param),
+                    ..
+                } = &node.expr
+                {
+                    cost = cost.saturating_add(substitutions[param].cost());
                 }
-                if cost <= *budget {
-                    *budget -= cost;
-                    let expanded = copy(
-                        &template.fragment.ir,
-                        template.fragment.root,
-                        ir,
-                        Some(symbols),
-                        &substitutions,
-                    );
-                    ir.nodes[id.0] = ir.nodes[expanded.0].clone();
-                    continue;
-                }
+            }
+            if cost <= *budget {
+                *budget -= cost;
+                let expanded = copy(
+                    &template.fragment.ir,
+                    template.fragment.root,
+                    ir,
+                    Some(symbols),
+                    &substitutions,
+                );
+                ir.nodes[id.0] = ir.nodes[expanded.0].clone();
+                continue;
             }
         }
         let canonical = ir.push(node.expr, node.span);

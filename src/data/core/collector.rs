@@ -28,7 +28,7 @@ impl<B> ValueCollector<B>
 where
     B: Iterator<Item = Result<Value, DataError>>,
 {
-    pub fn new(builder: B, slurp: bool) -> Self {
+    pub const fn new(builder: B, slurp: bool) -> Self {
         if slurp {
             Self::new_slurp(builder)
         } else {
@@ -36,14 +36,14 @@ where
         }
     }
 
-    pub fn new_passthrough(builder: B) -> Self {
+    pub const fn new_passthrough(builder: B) -> Self {
         Self {
             builder,
             kind: CollectorKind::Passthrough,
         }
     }
 
-    pub fn new_slurp(builder: B) -> Self {
+    pub const fn new_slurp(builder: B) -> Self {
         Self {
             builder,
             kind: CollectorKind::Slurp {

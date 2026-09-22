@@ -169,9 +169,9 @@ fn xml_streams_partial_events_before_truncation_error() {
         "expected at least the fully-closed <x>1</x> events before the error"
     );
     // The deepest fully-closed element's tag name/text must have streamed.
-    let has_x_name = items
-        .iter()
-        .any(|i| matches!(&i.value, Some(oneq::data::Value::String(s)) if &**s == "x"));
+    let has_x_name = items.iter().any(
+        |i| matches!(i, oneq::data::StreamItem::Value(oneq::data::Value::String(s)) if &**s == "x"),
+    );
     assert!(
         has_x_name,
         "expected the <x> element's name to have streamed before the truncation error"
@@ -184,9 +184,10 @@ fn yaml_streams_partial_events_before_truncation_error() {
     // has an indentation error on its second key - `a`/`b` (already fully
     // resolved before the error) must still have streamed.
     let truncated = "a: 1\nb: 2\nc:\n  d: 1\n   e: 2\n";
-    let mut parser =
+    let parser =
         oneq::data::AnyParser::new(DataFormat::Yaml, Input::new_string(truncated.to_owned()))
             .unwrap();
+    let mut parser = ValueBuilder::new(parser, StreamOption::Stream);
     let mut items = Vec::new();
     let mut saw_error = false;
     for item in &mut parser {
@@ -199,14 +200,8 @@ fn yaml_streams_partial_events_before_truncation_error() {
         }
     }
     assert!(saw_error, "expected an indentation error for `c`");
-    let has_a = items.iter().any(|i| {
-        matches!(&i.value, Some(oneq::data::Value::Decimal(n)) if **n == oneq::data::Decimal::from_i64(1))
-            && i.path.len() == 1
-    });
-    let has_b = items.iter().any(|i| {
-        matches!(&i.value, Some(oneq::data::Value::Decimal(n)) if **n == oneq::data::Decimal::from_i64(2))
-            && i.path.len() == 1
-    });
+    let has_a = items.iter().any(|i| i.to_string() == r#"[["a"],1]"#);
+    let has_b = items.iter().any(|i| i.to_string() == r#"[["b"],2]"#);
     assert!(
         has_a && has_b,
         "expected a's and b's leaf events to have streamed before the error in c"
@@ -264,7 +259,10 @@ fn yaml_multiline_string_stays_quoted_outside_pretty_mode() {
 #[test]
 fn toml_multiline_string_uses_triple_quote_in_default_mode() {
     assert_roundtrip(DataFormat::Toml, r#"{"a": "line1\nline2\nline3"}"#);
-    assert_roundtrip(DataFormat::Toml, r#"{"a": "with \"quotes\"\nand a\nnewline"}"#);
+    assert_roundtrip(
+        DataFormat::Toml,
+        r#"{"a": "with \"quotes\"\nand a\nnewline"}"#,
+    );
     assert_roundtrip(
         DataFormat::Toml,
         r#"{"nested": {"b": "m1\nm2"}, "e": [1, 2, 3]}"#,
@@ -322,11 +320,7 @@ fn yaml_alias_streams_as_a_single_event_not_leaf_by_leaf() {
     let rendered: Vec<String> = events.iter().map(|v| v.to_string()).collect();
     assert_eq!(
         rendered,
-        vec![
-            r#"[["a"],{"a":20}]"#,
-            r#"[["c"],{"a":20}]"#,
-            r#"[["c"]]"#,
-        ]
+        vec![r#"[["a"],{"a":20}]"#, r#"[["c"],{"a":20}]"#, r#"[["c"]]"#,]
     );
 }
 

@@ -140,7 +140,7 @@ fn prepare_inner(packet: &[u8]) -> anyhow::Result<()> {
         .run(entry, host, mode)
         .map_err(|e| anyhow::anyhow!(e.user_message()))?;
     execution.continue_after_error();
-    let serializer = opt.build_serializer()?;
+    let serializer = opt.build_serializer_with_output(crate::io::Output::Stdout)?;
     RUN.with(|run| {
         *run.borrow_mut() = Some(WasmRun {
             execution,

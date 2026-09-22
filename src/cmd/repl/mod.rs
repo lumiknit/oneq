@@ -7,16 +7,15 @@ use crate::{
     jq::parser,
     render,
 };
-use controller::{Controller, CompletionWord};
+use controller::{CompletionWord, Controller};
 use rustyline::{
-    Config, Context, Editor, Helper,
+    CompletionType, Config, Context, Editor, Helper,
     completion::{Completer, Pair},
     error::ReadlineError,
     highlight::Highlighter,
     hint::Hinter,
     history::DefaultHistory,
     validate::Validator,
-    CompletionType,
 };
 use std::{cell::RefCell, rc::Rc, str::FromStr};
 
@@ -96,9 +95,11 @@ fn run_doc_command(filter: &str) {
         return;
     }
     let mut controller = Controller::default();
-    let result = controller
-        .load(&doc, DataFormat::Json)
-        .and_then(|_| controller.evaluate(filter).map(|values| values.to_vec()));
+    let result = controller.load(&doc, DataFormat::Json).and_then(|()| {
+        controller
+            .evaluate(filter)
+            .map(<[data::core::value::Value]>::to_vec)
+    });
     match result {
         Ok(values) => {
             for value in values {
@@ -238,7 +239,7 @@ pub fn run(args: &flags::Args) {
                         Ok(next) => serializer = next,
                         Err(error) => eprintln!("1q repl: {error}"),
                     },
-                    Err(_) => eprintln!("1q repl: unknown output format '{rest}'"),
+                    Err(()) => eprintln!("1q repl: unknown output format '{rest}'"),
                 },
                 "load" | "l" | "file" | "f" => {
                     let result = std::fs::read_to_string(rest)

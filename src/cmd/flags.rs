@@ -308,7 +308,11 @@ pub struct Args {
     pub exit_status: bool,
 
     // Positional arguments
-    #[arg(index = 1, help = "inline jq script, default is '.'")]
+    #[arg(
+        index = 1,
+        allow_hyphen_values = true,
+        help = "inline jq script, default is '.'"
+    )]
     pub filter: Option<String>,
 
     #[arg(index = 2, num_args = 0.., trailing_var_arg = true,
@@ -325,7 +329,8 @@ impl Args {
     /// - 0: Pretty-printed output (Default)
     /// - 1: Inline output (single line, more readable)
     /// - 2: Compact output (no extra whitespace)
-    pub fn output_compact_level(&self) -> render::CompactLevel {
+    #[must_use]
+    pub const fn output_compact_level(&self) -> render::CompactLevel {
         if self.compact_output {
             render::CompactLevel::Compact
         } else if self.inline_output {
@@ -335,16 +340,25 @@ impl Args {
         }
     }
 
+    #[must_use]
     pub fn color_output(&self) -> bool {
+        self.color_output_for(false)
+    }
+
+    #[must_use]
+    pub fn color_output_for(&self, file_output: bool) -> bool {
         if self.monochrome_output {
             return false;
         }
         if self.color_output {
             return true;
         }
-        !cfg!(all(target_arch = "wasm32", target_os = "unknown")) && std::io::stdout().is_terminal()
+        !file_output
+            && !cfg!(all(target_arch = "wasm32", target_os = "unknown"))
+            && std::io::stdout().is_terminal()
     }
 
+    #[must_use]
     pub fn build_output_style(&self) -> render::FormatOptions {
         let mut style = render::FormatOptions::default();
         style

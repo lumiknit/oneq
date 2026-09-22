@@ -1,4 +1,4 @@
-//! New calc representation. No dependency on legacy data::calc.
+//! New calc representation. No dependency on legacy `data::calc`.
 use crate::{
     data::Value,
     jq::{ir::BuiltinId, vm::JqError},

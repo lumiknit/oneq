@@ -2,11 +2,11 @@
 use crate::{data::Value, jq::vm::JqError};
 use std::io::Write;
 
-pub(crate) fn type_name(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn type_name(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::String(input.type_name().to_string().into()))
 }
 /// jq's `debug`: prints `["DEBUG:", .]` as JSON to stderr, and passes the input through.
-pub(crate) fn debug(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn debug(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     writeln!(
         crate::io::stderr(),
         "[\"DEBUG:\",{}]",
@@ -18,7 +18,7 @@ pub(crate) fn debug(input: &Value, _: &[Value]) -> Result<Value, JqError> {
 /// jq's `stderr`: prints `.` in raw-and-compact mode to stderr with no
 /// decoration, no trailing newline. "Raw" here means a string prints
 /// unquoted, unlike `debug`; every other type still prints as compact JSON.
-pub(crate) fn stderr(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn stderr(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let result = match input {
         Value::String(s) => write!(crate::io::stderr(), "{s}"),
         other => write!(crate::io::stderr(), "{}", other.to_compact_json()),
@@ -26,7 +26,7 @@ pub(crate) fn stderr(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     result.map_err(|e| JqError::Runtime(Value::String(e.to_string().into())))?;
     Ok(input.clone())
 }
-pub(crate) fn length(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn length(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let length = match input {
         Value::Null => 0,
         Value::String(s) => s.chars().count(),
@@ -51,7 +51,7 @@ pub(crate) fn length(input: &Value, _: &[Value]) -> Result<Value, JqError> {
 use crate::{jq::vm::value::error, strs};
 use std::rc::Rc;
 
-pub(crate) fn add_owned(args: &mut [Value]) -> Result<Value, JqError> {
+pub fn add_owned(args: &mut [Value]) -> Result<Value, JqError> {
     let (a, b) = (std::mem::take(&mut args[0]), std::mem::take(&mut args[1]));
     Ok(match (a, b) {
         (Value::Null, b) => b,
@@ -83,10 +83,14 @@ pub(crate) fn add_owned(args: &mut [Value]) -> Result<Value, JqError> {
         },
     })
 }
-pub(crate) fn number(value: &Value) -> Result<f64, JqError> {
-    value
-        .as_number()
-        .ok_or_else(|| error(format!("{} is not a number", value.type_name())))
+pub fn number(value: &Value) -> Result<f64, JqError> {
+    value.as_number().ok_or_else(|| {
+        error(format!(
+            "{} ({}) number required",
+            value.type_name(),
+            crate::jq::vm::value::truncated_repr(value)
+        ))
+    })
 }
 /// jq's `"{a} ({repr}) and {b} ({repr}) cannot be {added,subtracted,...}"`,
 /// used when a binary arithmetic op's operand types don't have a defined
@@ -100,7 +104,7 @@ fn arith_type_error(verb: &str, a: &Value, b: &Value) -> JqError {
         crate::jq::vm::value::truncated_repr(b),
     ))
 }
-pub(crate) fn subtract(_: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn subtract(_: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(match (&args[0], &args[1]) {
         (Value::Array(a), Value::Array(b)) => Value::Array(Rc::new(
             a.iter().filter(|v| !b.contains(v)).cloned().collect(),
@@ -115,16 +119,21 @@ pub(crate) fn subtract(_: &Value, args: &[Value]) -> Result<Value, JqError> {
 /// among other things, that jq-language version doesn't clear the sign on
 /// `-0` (`-0 < 0` is false, so the `else` branch returns `.` = `-0`
 /// unchanged), but real jq's native `abs` does normalize `-0` to `0`.
-/// Passes non-numbers through unchanged, same as the old definition did
-/// (`"x" < 0` is `false` by jq's type-rank ordering).
-pub(crate) fn abs(input: &Value, _: &[Value]) -> Result<Value, JqError> {
-    Ok(match input {
-        Value::Decimal(n) => Value::decimal(n.abs()),
-        Value::Float(f) => Value::Float(f.abs()),
-        other => other.clone(),
-    })
+/// jq preserves strings, arrays, and objects through native `abs`; booleans
+/// and null still use the negation error path.
+pub fn abs(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+    match input {
+        Value::Decimal(n) => Ok(Value::decimal(n.abs())),
+        Value::Float(f) => Ok(Value::Float(f.abs())),
+        Value::String(_) | Value::Array(_) | Value::Object(_) => Ok(input.clone()),
+        _ => Err(error(format!(
+            "{} ({}) cannot be negated",
+            input.type_name(),
+            crate::jq::vm::value::truncated_repr(input)
+        ))),
+    }
 }
-pub(crate) fn negate(_: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn negate(_: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(match &args[0] {
         Value::Decimal(n) => Value::decimal(n.negate()),
         n @ Value::Float(_) => Value::Float(-number(n)?),
@@ -137,7 +146,7 @@ pub(crate) fn negate(_: &Value, args: &[Value]) -> Result<Value, JqError> {
         }
     })
 }
-pub(crate) fn multiply(_: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn multiply(_: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(match (&args[0], &args[1]) {
         (Value::String(s), n) | (n, Value::String(s)) if n.as_number().is_some() => {
             let n = number(n)?;
@@ -194,7 +203,7 @@ pub(crate) fn multiply(_: &Value, args: &[Value]) -> Result<Value, JqError> {
         }
     })
 }
-pub(crate) fn divide(_: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn divide(_: &Value, args: &[Value]) -> Result<Value, JqError> {
     if let (Value::String(s), Value::String(separator)) = (&args[0], &args[1]) {
         return Ok(Value::Array(Rc::new(if separator.is_empty() {
             s.chars()
@@ -228,7 +237,7 @@ fn remainder_by_zero_error(a: &Value, b: &Value) -> JqError {
         crate::jq::vm::value::truncated_repr(b),
     ))
 }
-pub(crate) fn modulo(_: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn modulo(_: &Value, args: &[Value]) -> Result<Value, JqError> {
     let (a_f, b_f) = (number(&args[0])?, number(&args[1])?);
     if a_f.is_nan() || b_f.is_nan() {
         return Ok(Value::Float(f64::NAN));
@@ -245,7 +254,7 @@ pub(crate) fn modulo(_: &Value, args: &[Value]) -> Result<Value, JqError> {
 }
 macro_rules! compare {
     ($name:ident, $op:tt) => {
-        pub(crate) fn $name(_: &Value, args: &[Value]) -> Result<Value,JqError> { Ok(Value::Bool(args[0] $op args[1])) }
+        pub fn $name(_: &Value, args: &[Value]) -> Result<Value,JqError> { Ok(Value::Bool(args[0] $op args[1])) }
     }
 }
 compare!(equal, ==);
@@ -254,29 +263,29 @@ compare!(less, <);
 compare!(less_equal, <=);
 compare!(greater, >);
 compare!(greater_equal, >=);
-pub(crate) fn not(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub const fn not(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Bool(matches!(
         input,
         Value::Null | Value::Bool(false)
     )))
 }
-pub(crate) fn tostring(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn tostring(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(match input {
         Value::String(_) => input.clone(),
         _ => Value::String(input.to_compact_json().into()),
     })
 }
-pub(crate) fn tojson(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn tojson(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::String(input.to_compact_json().into()))
 }
-pub(crate) fn fromjson(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn fromjson(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         return Err(error("fromjson requires a string"));
     };
     crate::data::parse_json_str(s).map_err(error)
 }
 
-pub(crate) fn tonumber(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn tonumber(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let invalid = || {
         error(format!(
             "{} ({}) cannot be parsed as a number",
@@ -290,7 +299,7 @@ pub(crate) fn tonumber(input: &Value, _: &[Value]) -> Result<Value, JqError> {
         // fine, but (unlike JSON's own permissive-whitespace parsing)
         // leading/trailing whitespace is not - `" 4"` and `"5 "` are both
         // rejected even though `"4"` and `"5"` parse fine.
-        Value::String(s) if s.trim() == &**s => {
+        Value::String(s) if s.trim() == **s => {
             let stripped = s.strip_prefix('+').unwrap_or(s);
             match crate::data::parse_json_str_detailed(stripped) {
                 Ok(value @ (Value::Decimal(_) | Value::Float(_))) => Ok(value),
@@ -301,17 +310,23 @@ pub(crate) fn tonumber(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     }
 }
 
-pub(crate) fn keys_unsorted(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn keys_unsorted(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Array(Rc::new(match input {
         Value::Array(a) => (0..a.len()).map(|i| Value::int(i as i64)).collect(),
         Value::Object(o) => o
             .keys()
             .map(|k| Value::String(strs::resolve(*k).unwrap_or("").to_string().into()))
             .collect(),
-        _ => return Err(error("keys requires an array or object")),
+        _ => {
+            return Err(error(format!(
+                "{} ({}) has no keys",
+                input.type_name(),
+                crate::jq::vm::value::truncated_repr(input)
+            )));
+        }
     })))
 }
-pub(crate) fn keys(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn keys(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(a) = keys_unsorted(input, args)? else {
         unreachable!()
     };
@@ -319,7 +334,7 @@ pub(crate) fn keys(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     a.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     Ok(Value::Array(Rc::new(a)))
 }
-pub(crate) fn has(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn has(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Bool(match (input, &args[0]) {
         (Value::Null, _) => false,
         (Value::Object(o), Value::String(k)) => o.contains_key(&strs::intern(k)),
@@ -331,26 +346,26 @@ pub(crate) fn has(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     }))
 }
 
-pub(crate) fn getpath(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn getpath(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(path) = &args[0] else {
         return Err(error("path must be an array"));
     };
     crate::jq::vm::value::getpath(input, path)
 }
-pub(crate) fn setpath(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn setpath(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(path) = &args[0] else {
         return Err(error("path must be an array"));
     };
     crate::jq::vm::value::setpath(input, path, &args[1])
 }
-pub(crate) fn delpaths(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn delpaths(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(paths) = &args[0] else {
         return Err(error("Paths must be specified as an array"));
     };
     crate::jq::vm::value::delpaths(input, paths)
 }
 
-pub(crate) fn builtins(_: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn builtins(_: &Value, _: &[Value]) -> Result<Value, JqError> {
     static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let names = NAMES.get_or_init(|| {
         let mut names: Vec<_> = super::registry()
@@ -388,4 +403,29 @@ pub(crate) fn builtins(_: &Value, _: &[Value]) -> Result<Value, JqError> {
             .map(|s| Value::String(s.into()))
             .collect(),
     )))
+}
+
+#[cfg(test)]
+mod abs_tests {
+    use super::abs;
+    use crate::data::Value;
+    use std::rc::Rc;
+
+    #[test]
+    fn abs_preserves_non_scalar_containers_like_jq() {
+        let array = Value::Array(Rc::new(vec![Value::int(1)]));
+        let object = Value::Object(Rc::new(indexmap::IndexMap::new()));
+        assert_eq!(abs(&array, &[]).unwrap(), array);
+        assert_eq!(abs(&object, &[]).unwrap(), object);
+        assert_eq!(
+            abs(&Value::String(Rc::new("x".to_owned())), &[]).unwrap(),
+            Value::String(Rc::new("x".to_owned()))
+        );
+    }
+
+    #[test]
+    fn abs_rejects_boolean_and_null() {
+        assert!(abs(&Value::Bool(true), &[]).is_err());
+        assert!(abs(&Value::Null, &[]).is_err());
+    }
 }

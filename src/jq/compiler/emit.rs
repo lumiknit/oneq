@@ -180,7 +180,7 @@ fn emit_expr(
             code.push(Instruction::Load(value));
         }
         Expr::Read(binding) => {
-            code.push(Instruction::Read(slots.allocate(SlotKey::Local(*binding))))
+            code.push(Instruction::Read(slots.allocate(SlotKey::Local(*binding))));
         }
         Expr::Pipe(items) => {
             for item in items {

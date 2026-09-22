@@ -3,10 +3,10 @@ use super::JqError;
 use crate::{data::Value, strs};
 use std::rc::Rc;
 
-pub(crate) fn error(message: impl Into<String>) -> JqError {
+pub fn error(message: impl Into<String>) -> JqError {
     JqError::Runtime(Value::String(message.into().into()))
 }
-pub(crate) fn index(base: &Value, key: &Value) -> Result<Value, JqError> {
+pub fn index(base: &Value, key: &Value) -> Result<Value, JqError> {
     match (base, key) {
         // `.[{start, end}]` is jq's slice-by-object shorthand, usable anywhere `.[expr]` is.
         (_, Value::Object(bounds))
@@ -70,7 +70,7 @@ pub(crate) fn index(base: &Value, key: &Value) -> Result<Value, JqError> {
 /// while a 30+ digit number keeps 26 (`26 + 3 dots`, no delimiters at all).
 /// Verified empirically against real jq by bisecting the exact
 /// truncate/don't-truncate boundary for both shapes.
-pub(crate) fn truncated_repr(value: &Value) -> String {
+pub fn truncated_repr(value: &Value) -> String {
     const MAX_TOTAL: usize = 29;
     let rendered = value.to_compact_json();
     if rendered.len() <= MAX_TOTAL {
@@ -89,7 +89,7 @@ pub(crate) fn truncated_repr(value: &Value) -> String {
     }
     format!("{open}{}...{close}", &content[..end])
 }
-pub(crate) fn slice(base: &Value, start: &Value, end: &Value) -> Result<Value, JqError> {
+pub fn slice(base: &Value, start: &Value, end: &Value) -> Result<Value, JqError> {
     let length = match base {
         Value::Null => return Ok(Value::Null),
         Value::Array(a) => a.len(),
@@ -127,14 +127,14 @@ pub(crate) fn slice(base: &Value, start: &Value, end: &Value) -> Result<Value, J
     })
 }
 
-pub(crate) fn getpath(root: &Value, path: &[Value]) -> Result<Value, JqError> {
+pub fn getpath(root: &Value, path: &[Value]) -> Result<Value, JqError> {
     let mut value = root.clone();
     for key in path {
         value = index(&value, key)?;
     }
     Ok(value)
 }
-pub(crate) fn setpath(root: &Value, path: &[Value], replacement: &Value) -> Result<Value, JqError> {
+pub fn setpath(root: &Value, path: &[Value], replacement: &Value) -> Result<Value, JqError> {
     let Some((key, rest)) = path.split_first() else {
         return Ok(replacement.clone());
     };
@@ -143,7 +143,14 @@ pub(crate) fn setpath(root: &Value, path: &[Value], replacement: &Value) -> Resu
             let mut map = match root {
                 Value::Null => indexmap::IndexMap::new(),
                 Value::Object(map) => map.as_ref().clone(),
-                _ => return Err(error("Cannot set object key on non-object")),
+                _ => {
+                    return Err(error(format!(
+                        "Cannot index {} with {} ({})",
+                        root.type_name(),
+                        "string",
+                        truncated_repr(&Value::String(key.clone()))
+                    )));
+                }
             };
             let key = strs::intern(key);
             let old = map.get(&key).unwrap_or(&Value::Null);
@@ -326,7 +333,7 @@ fn delete(root: &Value, path: &[Value]) -> Result<Value, JqError> {
         _ => Err(error("invalid deletion path")),
     }
 }
-pub(crate) fn delpaths(root: &Value, paths: &[Value]) -> Result<Value, JqError> {
+pub fn delpaths(root: &Value, paths: &[Value]) -> Result<Value, JqError> {
     let mut normalized = Vec::new();
     for path in paths {
         let Value::Array(path) = path else {

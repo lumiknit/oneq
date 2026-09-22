@@ -1,5 +1,7 @@
 //! Shared ID mapping for IR copying, substitution and traversal.
-use crate::jq::ir::*;
+use crate::jq::ir::{
+    BindingId, CallTarget, Expr, ExprId, FunctionId, Ir, LabelId, PathStep, Pattern, PatternId,
+};
 
 pub(super) trait Mapper {
     fn expr(&mut self, id: ExprId) -> ExprId {
@@ -138,7 +140,7 @@ pub(super) fn map_pattern(pattern: &mut Pattern, map: &mut impl Mapper) {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Item {
+pub enum Item {
     Expr(ExprId),
     Pattern(PatternId),
 }
@@ -158,7 +160,7 @@ impl Mapper for Children {
 
 /// Structural postorder, including computed pattern keys and nested definitions.
 /// Calls are references, not traversal edges (recursive calls therefore terminate).
-pub(crate) fn postorder(ir: &Ir, root: ExprId) -> Vec<Item> {
+pub fn postorder(ir: &Ir, root: ExprId) -> Vec<Item> {
     walk(ir, root, true)
 }
 

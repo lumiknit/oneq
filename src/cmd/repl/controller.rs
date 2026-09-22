@@ -80,7 +80,10 @@ impl Controller {
         let mut arities: std::collections::BTreeMap<&str, std::collections::BTreeSet<usize>> =
             std::collections::BTreeMap::new();
         for spec in crate::jq::builtins::registry() {
-            arities.entry(spec.name).or_default().insert(spec.params.len());
+            arities
+                .entry(spec.name)
+                .or_default()
+                .insert(spec.params.len());
         }
         for (name, arity) in self.session.function_names() {
             arities.entry(name).or_default().insert(arity);

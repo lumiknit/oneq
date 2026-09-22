@@ -1,6 +1,9 @@
 //! Chunks become immutable when appended. IDs remain valid across later appends.
 use crate::data::Value;
-use crate::jq::{compiler::calc::CalcProgram, ir::*};
+use crate::jq::{
+    compiler::calc::CalcProgram,
+    ir::{BindingId, ExprId, FunctionId, Ir, LabelId},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CodeId {
@@ -74,7 +77,7 @@ pub enum Instruction {
     /// Appends the current input to the innermost accumulator. Callers must
     /// follow with an explicit Backtrack to search for further items.
     CollectItem,
-    /// Placed at a BeginCollect's `end`: pops the accumulator into an array
+    /// Placed at a `BeginCollect`'s `end`: pops the accumulator into an array
     /// and continues with it as input. The backtrack that reaches this point
     /// already restored the pre-collection input/frame/operands.
     EndCollect,

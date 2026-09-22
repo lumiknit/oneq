@@ -6,17 +6,17 @@ use crate::{
 };
 
 use super::decimal::Decimal;
-use super::stream::*;
+use super::stream::PathItem;
 use indexmap::IndexMap;
 
-/// ObjectKey uses isize, which is symbol table index.
+/// `ObjectKey` uses isize, which is symbol table index.
 pub type ObjectKey = strs::Symbol;
 pub type ArrayIndex = isize;
 
 // Handle for array.
 // As jq, if idx >= 0, use as is, if idx < 0, use size + idx.
 // Only for negative case, bound check is needed.
-pub fn resolve_index(idx: ArrayIndex, size: usize) -> Result<usize, DataError> {
+pub const fn resolve_index(idx: ArrayIndex, size: usize) -> Result<usize, DataError> {
     if idx >= 0 {
         let idx = idx as usize;
         Ok(idx)
@@ -48,26 +48,31 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn int(n: i64) -> Value {
-        Value::Decimal(Rc::new(Decimal::from_i64(n)))
+    #[must_use]
+    pub fn int(n: i64) -> Self {
+        Self::Decimal(Rc::new(Decimal::from_i64(n)))
     }
-    pub fn decimal(d: Decimal) -> Value {
-        Value::Decimal(Rc::new(d))
-    }
-
-    pub fn empty_array() -> Value {
-        Value::Array(Rc::new(Vec::new()))
+    #[must_use]
+    pub fn decimal(d: Decimal) -> Self {
+        Self::Decimal(Rc::new(d))
     }
 
-    pub fn empty_object() -> Value {
-        Value::Object(Rc::new(IndexMap::new()))
+    #[must_use]
+    pub fn empty_array() -> Self {
+        Self::Array(Rc::new(Vec::new()))
+    }
+
+    #[must_use]
+    pub fn empty_object() -> Self {
+        Self::Object(Rc::new(IndexMap::new()))
     }
 }
 
 impl Value {
     /// Iterate object entries in insertion order or lexical key order.
     /// Non-object values return `None`; sorting never mutates the object.
-    pub fn object_iter(&self, sorted: bool) -> Option<std::vec::IntoIter<(&ObjectKey, &Value)>> {
+    #[must_use]
+    pub fn object_iter(&self, sorted: bool) -> Option<std::vec::IntoIter<(&ObjectKey, &Self)>> {
         let Self::Object(map) = self else {
             return None;
         };
@@ -75,9 +80,9 @@ impl Value {
     }
 
     pub(crate) fn object_entries(
-        map: &IndexMap<ObjectKey, Value>,
+        map: &IndexMap<ObjectKey, Self>,
         sorted: bool,
-    ) -> std::vec::IntoIter<(&ObjectKey, &Value)> {
+    ) -> std::vec::IntoIter<(&ObjectKey, &Self)> {
         let mut entries: Vec<_> = map.iter().collect();
         if sorted {
             entries.sort_by_key(|(key, _)| strs::resolve(**key).expect("interned object key"));
@@ -85,12 +90,14 @@ impl Value {
         entries.into_iter()
     }
 
-    pub fn is_null(&self) -> bool {
-        matches!(self, Value::Null)
+    #[must_use]
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
     }
 
     /// Return true iff the value is not null or false. Follwing 'jq' rule.
-    pub fn is_truthy(&self) -> bool {
+    #[must_use]
+    pub const fn is_truthy(&self) -> bool {
         match self {
             Self::Null => false,
             Self::Bool(b) => *b,
@@ -98,6 +105,7 @@ impl Value {
         }
     }
 
+    #[must_use]
     pub fn as_number(&self) -> Option<f64> {
         match self {
             Self::Decimal(d) => Some(d.to_f64()),
@@ -106,27 +114,28 @@ impl Value {
         }
     }
 
-    pub fn type_name(&self) -> &'static str {
+    #[must_use]
+    pub const fn type_name(&self) -> &'static str {
         match self {
             Self::Null => "null",
             Self::Bool(_) => "boolean",
-            Self::Decimal(_) => "number",
-            Self::Float(_) => "number",
+            Self::Decimal(_) | Self::Float(_) => "number",
             Self::String(_) => "string",
             Self::Array(_) => "array",
             Self::Object(_) => "object",
         }
     }
 
-    pub fn rank(&self) -> u8 {
+    #[must_use]
+    pub const fn rank(&self) -> u8 {
         match self {
-            Value::Null => 0,
-            Value::Bool(false) => 1,
-            Value::Bool(true) => 2,
-            Value::Decimal(_) | Value::Float(_) => 3,
-            Value::String(_) => 4,
-            Value::Array(_) => 5,
-            Value::Object(_) => 6,
+            Self::Null => 0,
+            Self::Bool(false) => 1,
+            Self::Bool(true) => 2,
+            Self::Decimal(_) | Self::Float(_) => 3,
+            Self::String(_) => 4,
+            Self::Array(_) => 5,
+            Self::Object(_) => 6,
         }
     }
 
@@ -141,7 +150,7 @@ impl Value {
     }
 
     /// Return the value at path, or Err if path does not exist.
-    pub fn get_path(&self, path: &[PathItem]) -> Result<&Value, String> {
+    pub fn get_path(&self, path: &[PathItem]) -> Result<&Self, String> {
         let mut current = self;
         for item in path {
             let (i, is_key) = item.unpack();
@@ -170,39 +179,46 @@ impl Value {
     /// one document together) is updated without copying its containers.
     /// `set_path` clones every container along the path, which makes building
     /// an N-element document out of N leaf events quadratic; this is O(depth).
-    pub fn set_path_mut(&mut self, path: &[PathItem], value: Value) -> Result<(), DataError> {
+    pub fn set_path_mut(&mut self, path: &[PathItem], value: Self) -> Result<(), DataError> {
         let Some((head, rest)) = path.split_first() else {
             *self = value;
             return Ok(());
         };
 
-        let (i, is_key) = head.unpack();
+        self.child_mut(*head)?.set_path_mut(rest, value)
+    }
+
+    /// Access one child, creating a container for Null and inserting missing
+    /// entries. Shared with the builder so detached subtrees keep the same
+    /// index, type-error, and copy-on-write semantics as `set_path_mut`.
+    pub(super) fn child_mut(&mut self, item: PathItem) -> Result<&mut Self, DataError> {
+        let (i, is_key) = item.unpack();
 
         if is_key {
-            if matches!(self, Value::Null) {
-                *self = Value::Object(Rc::new(IndexMap::new()));
+            if matches!(self, Self::Null) {
+                *self = Self::Object(Rc::new(IndexMap::new()));
             }
             match self {
-                Value::Object(obj) => {
+                Self::Object(obj) => {
                     let entries = Rc::make_mut(obj);
-                    entries.entry(i).or_insert(Value::Null).set_path_mut(rest, value)
+                    Ok(entries.entry(i).or_insert(Self::Null))
                 }
                 other => Err(DataError::UnexpectedObjectKeyType {
                     index_type: other.type_name(),
                 }),
             }
         } else {
-            if matches!(self, Value::Null) {
-                *self = Value::Array(Rc::new(Vec::new()));
+            if matches!(self, Self::Null) {
+                *self = Self::Array(Rc::new(Vec::new()));
             }
             match self {
-                Value::Array(arr) => {
+                Self::Array(arr) => {
                     let items = Rc::make_mut(arr);
                     let idx = resolve_index(i, items.len())?;
                     if items.len() <= idx {
-                        items.resize(idx + 1, Value::Null);
+                        items.resize(idx + 1, Self::Null);
                     }
-                    items[idx].set_path_mut(rest, value)
+                    Ok(&mut items[idx])
                 }
                 other => Err(DataError::UnexpectedArrayIndexType {
                     index_type: other.type_name(),
@@ -214,7 +230,7 @@ impl Value {
     /// Return new Value with the value at path set to value.
     /// If the path does not exists, it'll try to create array/object as needed.
     /// If index is invalid (wrong type or out of bounds), it'll return Err.
-    pub fn set_path(&self, path: &[PathItem], value: Value) -> Result<Value, DataError> {
+    pub fn set_path(&self, path: &[PathItem], value: Self) -> Result<Self, DataError> {
         let Some((head, rest)) = path.split_first() else {
             return Ok(value);
         };
@@ -223,9 +239,9 @@ impl Value {
 
         if is_key {
             let key = i;
-            let mut entries: IndexMap<ObjectKey, Value> = match self {
-                Value::Object(obj) => (**obj).clone(),
-                Value::Null => IndexMap::new(),
+            let mut entries: IndexMap<ObjectKey, Self> = match self {
+                Self::Object(obj) => (**obj).clone(),
+                Self::Null => IndexMap::new(),
                 other => {
                     return Err(DataError::UnexpectedObjectKeyType {
                         index_type: other.type_name(),
@@ -234,14 +250,14 @@ impl Value {
             };
             let child = match entries.get(&key) {
                 Some(existing) => existing.set_path(rest, value)?,
-                None => Value::Null.set_path(rest, value)?,
+                None => Self::Null.set_path(rest, value)?,
             };
             entries.insert(key, child);
-            Ok(Value::Object(Rc::new(entries)))
+            Ok(Self::Object(Rc::new(entries)))
         } else {
-            let mut items: Vec<Value> = match self {
-                Value::Array(arr) => (**arr).clone(),
-                Value::Null => Vec::new(),
+            let mut items: Vec<Self> = match self {
+                Self::Array(arr) => (**arr).clone(),
+                Self::Null => Vec::new(),
                 other => {
                     return Err(DataError::UnexpectedArrayIndexType {
                         index_type: other.type_name(),
@@ -250,10 +266,10 @@ impl Value {
             };
             let idx = resolve_index(i, items.len())?;
             if items.len() <= idx {
-                items.resize(idx + 1, Value::Null);
+                items.resize(idx + 1, Self::Null);
             }
             items[idx] = items[idx].set_path(rest, value)?;
-            Ok(Value::Array(Rc::new(items)))
+            Ok(Self::Array(Rc::new(items)))
         }
     }
 }
@@ -307,7 +323,7 @@ impl Value {
         match self {
             Self::Null => f.push_str("null"),
             Self::Bool(b) => f.push_str(if *b { "true" } else { "false" }),
-            Self::Decimal(n) => write!(f, "{}", n).unwrap(),
+            Self::Decimal(n) => write!(f, "{n}").unwrap(),
             Self::Float(n) if n.is_nan() => f.push_str("null"),
             Self::Float(n) => {
                 let n = if n.is_finite() {
@@ -317,31 +333,31 @@ impl Value {
                 } else {
                     f64::MAX
                 };
-                write!(f, "{}", n).unwrap();
+                write!(f, "{n}").unwrap();
             }
             Self::String(s) => {
-                f.push_str("\"");
+                f.push('"');
                 s.escape_json('"', f).unwrap();
-                f.push_str("\"");
+                f.push('"');
             }
             Self::Array(v) => {
-                f.push_str("[");
+                f.push('[');
                 let mut i = v.iter();
                 if let Some(v) = i.next() {
                     v.to_raw_string_(f);
                 }
                 for v in i {
-                    f.push_str(",");
+                    f.push(',');
                     v.to_raw_string_(f);
                 }
-                f.push_str("]");
+                f.push(']');
             }
             Self::Object(v) => {
-                f.push_str("{");
+                f.push('{');
                 let mut i = v.iter();
                 if let Some(v) = i.next() {
                     let key = strs::resolve(*v.0).unwrap();
-                    f.push_str("\"");
+                    f.push('"');
                     key.escape_json('"', f).unwrap();
                     f.push_str("\":");
                     v.1.to_raw_string_(f);
@@ -353,12 +369,13 @@ impl Value {
                     f.push_str("\":");
                     v.1.to_raw_string_(f);
                 }
-                f.push_str("}");
+                f.push('}');
             }
         }
     }
 
     /// Unlike display, unsorted and allow unicode
+    #[must_use]
     pub fn to_compact_json(&self) -> String {
         let mut s = String::with_capacity(8);
         self.to_raw_string_(&mut s);
@@ -367,23 +384,23 @@ impl Value {
 }
 
 impl PartialOrd for Value {
-    fn partial_cmp(&self, b: &Value) -> Option<Ordering> {
+    fn partial_cmp(&self, b: &Self) -> Option<Ordering> {
         if self.rank() != b.rank() {
             return self.rank().partial_cmp(&b.rank());
         }
         match (self, b) {
-            (Value::Null, Value::Null) => Some(Ordering::Equal),
-            (Value::Bool(a), Value::Bool(b)) => a.partial_cmp(b),
+            (Self::Null, Self::Null) => Some(Ordering::Equal),
+            (Self::Bool(a), Self::Bool(b)) => a.partial_cmp(b),
             // Exact comparison between two literal decimals (never rounds
             // through `f64`) - matters for e.g.
             // `13911860366432393 == 13911860366432392`, which stays
             // `false` even though both round to the same nearest double.
-            (Value::Decimal(a), Value::Decimal(b)) => Some(a.compare(b)),
-            (Value::Decimal(_) | Value::Float(_), Value::Decimal(_) | Value::Float(_)) => {
+            (Self::Decimal(a), Self::Decimal(b)) => Some(a.compare(b)),
+            (Self::Decimal(_) | Self::Float(_), Self::Decimal(_) | Self::Float(_)) => {
                 self.as_number().partial_cmp(&b.as_number())
             }
-            (Value::String(a), Value::String(b)) => a.partial_cmp(b),
-            (Value::Array(a), Value::Array(b)) => {
+            (Self::String(a), Self::String(b)) => a.partial_cmp(b),
+            (Self::Array(a), Self::Array(b)) => {
                 for (a, b) in a.iter().zip(b.iter()) {
                     let c = (a).partial_cmp(b)?;
                     if c != Ordering::Equal {
@@ -392,11 +409,11 @@ impl PartialOrd for Value {
                 }
                 a.len().partial_cmp(&b.len())
             }
-            (Value::Object(a), Value::Object(b)) => {
+            (Self::Object(a), Self::Object(b)) => {
                 let mut ak: Vec<_> = a.keys().map(|k| strs::resolve(*k).unwrap_or("")).collect();
-                ak.sort();
+                ak.sort_unstable();
                 let mut bk: Vec<_> = b.keys().map(|k| strs::resolve(*k).unwrap_or("")).collect();
-                bk.sort();
+                bk.sort_unstable();
 
                 let c = ak.partial_cmp(&bk)?;
                 if c != Ordering::Equal {

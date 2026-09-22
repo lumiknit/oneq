@@ -1,6 +1,6 @@
 //! Parse dependencies before name resolution. Cached files are immutable Session snapshots.
 //!
-//! Each source owns its FileSet: sharing a parsed module never requires relocating
+//! Each source owns its `FileSet`: sharing a parsed module never requires relocating
 //! Pair spans. Dependency edges (aliases/search metadata) belong to a preparation,
 //! not to the file cache, so a later compile can use a different search path.
 pub(super) mod link;
@@ -79,9 +79,11 @@ pub struct ModuleGraph {
     pub(crate) order: Vec<ModuleId>,
 }
 impl ModuleGraph {
+    #[must_use]
     pub fn entry(&self) -> &Module {
         &self.modules[0]
     }
+    #[must_use]
     pub fn module(&self, id: ModuleId) -> Option<&Module> {
         self.modules.iter().find(|m| m.source.id == id)
     }
@@ -93,7 +95,7 @@ enum FileKind {
     Data,
 }
 impl FileKind {
-    fn suffix(self) -> &'static str {
+    const fn suffix(self) -> &'static str {
         match self {
             Self::Module => "jq",
             Self::Data => "json",

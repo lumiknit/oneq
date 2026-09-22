@@ -32,14 +32,14 @@ pub struct InputHost<I> {
     tracker: Option<SharedInputTracker>,
 }
 impl<I> InputHost<I> {
-    pub fn new(inputs: I) -> Self {
+    pub const fn new(inputs: I) -> Self {
         Self {
             inputs,
             tracker: None,
         }
     }
 
-    pub fn with_tracker(inputs: I, tracker: SharedInputTracker) -> Self {
+    pub const fn with_tracker(inputs: I, tracker: SharedInputTracker) -> Self {
         Self {
             inputs,
             tracker: Some(tracker),

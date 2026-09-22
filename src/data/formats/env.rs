@@ -111,23 +111,26 @@ fn parse_line(line: &str) -> Option<(String, String)> {
 pub struct EnvParser<'a> {
     input: BufReader<Input<'a>>,
     done: bool,
-    /// Last key emitted (if any), needed for the final "close the object"
-    /// event, which - like every other container-close event in this
-    /// crate's stream protocol - is keyed by the path of its last child.
-    last_key: Option<PathItem>,
+    has_entries: bool,
+    pending_value: Option<Value>,
 }
 impl<'a> EnvParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>) -> Self {
         Self {
             input: BufReader::new(input),
             done: false,
-            last_key: None,
+            has_entries: false,
+            pending_value: None,
         }
     }
 }
-impl<'a> Iterator for EnvParser<'a> {
+impl Iterator for EnvParser<'_> {
     type Item = ParseOutput;
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(value) = self.pending_value.take() {
+            return Some(Ok(StreamItem::Value(value)));
+        }
         if self.done {
             return None;
         }
@@ -136,15 +139,10 @@ impl<'a> Iterator for EnvParser<'a> {
             match self.input.read_line(&mut line) {
                 Ok(0) => {
                     self.done = true;
-                    return Some(Ok(match self.last_key.take() {
-                        Some(key) => StreamItem {
-                            path: vec![key],
-                            value: None,
-                        },
-                        None => StreamItem {
-                            path: vec![],
-                            value: Some(Value::empty_object()),
-                        },
+                    return Some(Ok(if self.has_entries {
+                        StreamItem::Close
+                    } else {
+                        StreamItem::Value(Value::empty_object())
                     }));
                 }
                 Ok(_) => {
@@ -152,11 +150,9 @@ impl<'a> Iterator for EnvParser<'a> {
                         continue;
                     };
                     let key = PathItem::new_key(strs::intern(&key));
-                    self.last_key = Some(key);
-                    return Some(Ok(StreamItem {
-                        path: vec![key],
-                        value: Some(Value::String(value.into())),
-                    }));
+                    self.has_entries = true;
+                    self.pending_value = Some(Value::String(value.into()));
+                    return Some(Ok(StreamItem::Push(key)));
                 }
                 Err(e) => {
                     self.done = true;
@@ -166,7 +162,7 @@ impl<'a> Iterator for EnvParser<'a> {
         }
     }
 }
-impl<'a> Parser for EnvParser<'a> {}
+impl Parser for EnvParser<'_> {}
 
 /// Shell single-quotes `s`, escaping any embedded `'` as `'\''`.
 fn shell_quote(out: &mut String, s: &str) {
@@ -201,7 +197,8 @@ pub struct EnvSerializer {
     export: bool,
 }
 impl EnvSerializer {
-    pub fn new(output: Output, options: render::Options, format: DataFormat) -> Self {
+    #[must_use]
+    pub const fn new(output: Output, options: render::Options, format: DataFormat) -> Self {
         Self {
             output,
             options,
@@ -217,6 +214,9 @@ impl EnvSerializer {
         out.push('=');
         write_value(out, value);
         out.push('\n');
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 impl Serializer for EnvSerializer {
@@ -236,13 +236,13 @@ impl Serializer for EnvSerializer {
             }
             Value::Array(items) => {
                 for (i, v) in items.iter().enumerate() {
-                    self.write_entry(&mut text, &format!("_{}", i), v);
+                    self.write_entry(&mut text, &format!("_{i}"), v);
                 }
             }
             other => self.write_entry(&mut text, "_", other),
         }
         if let Some(s) = self.options.out.doc_end {
-            text.push_str(s)
+            text.push_str(s);
         }
         self.output
             .write_all(text.as_bytes())

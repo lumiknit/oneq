@@ -71,8 +71,7 @@ fn record(text: &str, found: Option<::regex::Match<'_>>, name: Option<&str>) -> 
     let mut fields = vec![("offset", offset), ("length", length), ("string", value)];
     fields.push((
         "name",
-        name.map(|n| Value::String(n.to_string().into()))
-            .unwrap_or(Value::Null),
+        name.map_or(Value::Null, |n| Value::String(n.to_string().into())),
     ));
     object(fields)
 }
@@ -96,10 +95,9 @@ fn matches(input: &Value, args: &[Value], capture_only: bool) -> Result<Vec<Valu
                     name.map(|name| {
                         (
                             strs::intern(name),
-                            captures
-                                .get(i)
-                                .map(|m| Value::String(m.as_str().to_owned().into()))
-                                .unwrap_or(Value::Null),
+                            captures.get(i).map_or(Value::Null, |m| {
+                                Value::String(m.as_str().to_owned().into())
+                            }),
                         )
                     })
                 })
@@ -133,7 +131,7 @@ fn matches(input: &Value, args: &[Value], capture_only: bool) -> Result<Vec<Valu
 }
 /// jq's native `_match_impl(re; mode; testmode)`: `testmode` selects between a
 /// boolean (as `test` wants) and the full match-record array (as `match` wants).
-pub(crate) fn match_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn match_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let testmode = matches!(args.get(2), Some(Value::Bool(true)));
     if testmode {
         let text = string(input)?;
@@ -148,7 +146,7 @@ pub(crate) fn match_impl(input: &Value, args: &[Value]) -> Result<Value, JqError
     }
 }
 
-pub(crate) fn capture_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn capture_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Array(Rc::new(matches(input, args, true)?)))
 }
 

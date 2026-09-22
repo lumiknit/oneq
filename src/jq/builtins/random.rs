@@ -15,7 +15,7 @@ fn rng() -> &'static Mutex<ChaCha8Rng> {
         let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default() as u64;
         let seed = nanos ^ nanos.rotate_left(29) ^ 0x9e3779b97f4a7c15;
         let mut bytes = [0u8; 32];
-        for (i, chunk) in bytes.chunks_exact_mut(8).enumerate() {
+        for (i, chunk) in bytes.as_chunks_mut::<8>().0.iter_mut().enumerate() {
             let value =
                 seed.rotate_left((i * 13) as u32) ^ (i as u64).wrapping_mul(0x9e3779b97f4a7c15);
             chunk.copy_from_slice(&value.to_le_bytes());
@@ -37,13 +37,13 @@ fn number_error(name: &str, value: &Value) -> JqError {
     ))
 }
 
-pub(crate) fn random(_: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn random(_: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Float(
         (next_u64() >> 11) as f64 / 9_007_199_254_740_992.0,
     ))
 }
 
-pub(crate) fn randint2(_: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn randint2(_: &Value, args: &[Value]) -> Result<Value, JqError> {
     randint_range(args, 1)
 }
 
@@ -70,7 +70,7 @@ fn randint_range(args: &[Value], offset: usize) -> Result<Value, JqError> {
     Ok(Value::int(a as i64 + next_u64().wrapping_rem(width) as i64))
 }
 
-pub(crate) fn choice(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn choice(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::Array(values) = input else {
         return Err(JqError::Runtime(Value::String(
             "choice expects an array".to_string().into(),

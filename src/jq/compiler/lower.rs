@@ -228,10 +228,10 @@ fn lower_expr_inner(
                 .span
                 .as_ref()
                 .and_then(|span| ir.files.locate(span.start));
-            let file = location
-                .as_ref()
-                .map(|loc| ir.files.files[loc.file].path.clone())
-                .unwrap_or_else(|| options.path.clone());
+            let file = location.as_ref().map_or_else(
+                || options.path.clone(),
+                |loc| ir.files.files[loc.file].path.clone(),
+            );
             let line = location.map_or(1, |loc| loc.line);
             Expr::Literal(Literal::Value(Value::Object(std::rc::Rc::new(
                 [
@@ -381,7 +381,7 @@ fn lower_expr_inner(
                 .unwrap_or(0);
             let mut fields = indexmap::IndexMap::new();
             fields.insert(strs::keyword_file(), Value::String(file.into()));
-            fields.insert(strs::keyword_line(), Value::int(line as i64));
+            fields.insert(strs::keyword_line(), Value::int(line));
             Expr::Literal(Literal::Value(Value::Object(std::rc::Rc::new(fields))))
         }
         PairTag::Invoke => {

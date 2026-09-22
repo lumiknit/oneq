@@ -59,10 +59,12 @@ fn initialize_keywords() {
         return;
     }
     let mut map = HashMap::with_capacity(KEYWORDS.len());
-    let mut list = STRING_LIST.write().unwrap();
-    for (index, keyword) in KEYWORDS.iter().enumerate() {
-        map.insert(*keyword, index as Symbol);
-        list.push(keyword);
+    {
+        let mut list = STRING_LIST.write().unwrap();
+        for (index, keyword) in KEYWORDS.iter().enumerate() {
+            map.insert(*keyword, index as Symbol);
+            list.push(keyword);
+        }
     }
     *pool = Some(map);
 }
@@ -70,8 +72,7 @@ fn initialize_keywords() {
 /// Tries to intern a string into a symbol, returning None if the string is not interned.
 pub fn try_intern(s: &str) -> Option<Symbol> {
     initialize_keywords();
-    let pool = STRING_POOL.read().unwrap();
-    if let Some(pool) = &*pool
+    if let Some(pool) = &*STRING_POOL.read().unwrap()
         && let Some(&symbol) = pool.get(s)
     {
         return Some(symbol);
@@ -99,15 +100,18 @@ pub fn intern(s: &str) -> Symbol {
     let mut string_list = STRING_LIST.write().unwrap();
 
     // Intern the string
-    if string_list.len() >= i64::MAX as usize {
-        panic!("String pool overflow");
-    }
+    assert!(
+        string_list.len() < i64::MAX as usize,
+        "String pool overflow"
+    );
 
     let symbol = string_list.len() as Symbol;
     let static_str: &'static str = Box::leak(s.to_string().into_boxed_str());
+    string_list.push(static_str);
+    drop(string_list); // Release the lock on STRING_LIST before acquiring the lock on STRING_POOL
+
     pool.get_or_insert_with(HashMap::new)
         .insert(static_str, symbol);
-    string_list.push(static_str);
     symbol
 }
 

@@ -1,5 +1,8 @@
 //! Lexical names are separate from stable declaration identities and frame slots.
-use super::{ir::*, parser::pairs::SpanPos};
+use super::{
+    ir::{BindingId, CallTarget, LabelId, ModuleId},
+    parser::pairs::SpanPos,
+};
 use crate::strs::Symbol;
 use std::collections::HashMap;
 
