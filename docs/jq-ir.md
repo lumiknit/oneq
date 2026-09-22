@@ -9,6 +9,7 @@ module loading + dependency order
     → lexical resolution / direct Pair lowering
     → closed function templates and inlining
     → unused function removal / arena compaction
+    → literal folding / constant paths / arena compaction
     → VM emission
 ```
 
@@ -89,6 +90,47 @@ discarded or redefined name from selecting the wrong template.
 `CompileOptions::inline` defaults to true. Setting it to false skips template
 expansion and its cleanup for that append; it retains lowering's canonical forms.
 The embedded library uses the default compiler options when Session is created.
+
+## Constant folding
+
+`compiler/ir_const_fold.rs` runs after inlining, also when inlining is disabled.
+It folds literal arithmetic and comparisons using the VM's scalar operations:
+binary numeric arithmetic produces `Value::Float`, while unary negation preserves
+decimal precision. Failed operations stay in IR so runtime error handling and
+unreachable branches keep their semantics. Literal strings piped into trim,
+ltrim, rtrim or ASCII case conversion are folded too. Expensive operations such
+as string repetition and regex evaluation are not folded.
+
+String index literals become interned keys. Fully constant string paths use
+`ConstPath { base, steps: Vec<Symbol> }`, merging adjacent constant path nodes.
+Mixed paths retain their original-input boundary and use `PathStep::Key` for
+constant string steps; numeric indices, computed indices, iteration and slices
+retain their existing semantics. The VM's `ConstPath` instruction directly looks
+up interned object keys and only materializes strings for path tracking or errors.
+Arena compaction removes obsolete operands and key literal nodes after folding.
+
+Constant arrays and objects are also folded into literal values.
+
+## Container plans and last
+
+The emitter builds `ContainerPlan::Array` and `ContainerPlan::Object` layouts
+containing inline constants and placeholders for evaluated values. `MakeContainer`
+constructs any fixed number of elements, including one, in one instruction.
+Fixed arrays require structurally
+single-output expressions with no escaping declarations; other arrays retain
+stream collection. Object layouts support streaming values and preserve their
+Cartesian evaluation order; computed or duplicate keys use general object code.
+
+For `lhs + <container expression>`, `ExtendContainer` evaluates RHS fields before
+the LHS, matching infix ordering, then extends a uniquely owned container directly.
+Shared values use copy-on-write. Incompatible types take the ordinary addition
+error path. Constant RHS containers continue to use `InfixConst` and its owned
+addition implementation. Up to eight dynamic fields use stack-local scratch.
+
+Native `last(g)` lowers to `Last(g)`. Its VM region shares collection recovery
+boundaries but retains only one value (`LastItem`/`EndLast`), using constant space.
+It still executes the complete source, propagates errors, and emits nothing for
+an empty source. The zero-argument `last` and user-defined overrides are unchanged.
 
 ## Verification
 

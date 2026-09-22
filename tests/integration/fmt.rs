@@ -107,14 +107,14 @@ fn test_fmt_stdin_with_identity_filter() {
         "{}",
         String::from_utf8_lossy(&default.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&default.stdout), r#"{a: 20}"#);
+    assert_eq!(String::from_utf8_lossy(&default.stdout), r"{a: 20}");
     let output = run_oneq(&["--fmt", "."], br#"{"a": 20}"#);
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), r#"{a: 20}"#);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), r"{a: 20}");
 }
 
 /// Focused regression probes for syntax that is easy to regroup while
@@ -248,11 +248,11 @@ fn test_fmt_behave() {
             let curr = completed.fetch_add(1, Ordering::Relaxed) + 1;
             let percentage = (curr as f64 / total_tasks as f64) * 100.0;
 
-            print!("\rProgress: {}/{} ({:.1}%)", curr, total_tasks, percentage);
+            print!("\rProgress: {curr}/{total_tasks} ({percentage:.1}%)");
             let _ = std::io::stdout().flush();
         }
 
-        println!("Script {} DONE\n", script_name);
+        println!("Script {script_name} DONE\n");
         let _ = std::io::stdout().flush();
     });
 

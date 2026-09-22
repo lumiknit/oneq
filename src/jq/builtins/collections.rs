@@ -11,6 +11,18 @@ fn array(value: &Value) -> Result<&Vec<Value>, JqError> {
     }
 }
 
+/// jq names both operands of the failed operation. `min`/`max` go through
+/// its `_min_by_impl` pair, so there the same value is reported twice.
+fn pair_error(a: &Value, b: &Value, reason: &str) -> JqError {
+    error(format!(
+        "{} ({}) and {} ({}) {reason}",
+        a.type_name(),
+        crate::jq::vm::value::truncated_repr(a),
+        b.type_name(),
+        crate::jq::vm::value::truncated_repr(b)
+    ))
+}
+
 pub fn compare(a: &Value, b: &Value) -> Ordering {
     a.partial_cmp(b).unwrap_or(Ordering::Equal)
 }
@@ -40,63 +52,72 @@ pub fn unique(input: &Value, args: &[Value]) -> Result<Value, JqError> {
 }
 
 pub fn min(input: &Value, _: &[Value]) -> Result<Value, JqError> {
-    Ok(array(input)?
+    let Value::Array(values) = input else {
+        return Err(pair_error(input, input, "cannot be iterated over"));
+    };
+    Ok(values
         .iter()
         .min_by(|a, b| compare(a, b))
         .cloned()
         .unwrap_or(Value::Null))
 }
 pub fn max(input: &Value, _: &[Value]) -> Result<Value, JqError> {
-    Ok(array(input)?
+    let Value::Array(values) = input else {
+        return Err(pair_error(input, input, "cannot be iterated over"));
+    };
+    Ok(values
         .iter()
         .max_by(|a, b| compare(a, b))
         .cloned()
         .unwrap_or(Value::Null))
 }
 
+/// jq only defines containment between two strings, arrays or objects. Any
+/// other pair is `true` when the two values are equal and `false` when both
+/// are numbers; everything else is a type error, which is why
+/// `1 | contains(2)` is `false` but `false | contains(true)` fails. The
+/// recursion *inside* a container never type-checks, so
+/// `[1] | contains(["a"])` is plain `false`.
 pub fn contains(input: &Value, args: &[Value]) -> Result<Value, JqError> {
-    Ok(Value::Bool(contains_value(input, &args[0])?))
+    let other = &args[0];
+    match (input, other) {
+        (Value::String(_), Value::String(_))
+        | (Value::Array(_), Value::Array(_))
+        | (Value::Object(_), Value::Object(_)) => Ok(Value::Bool(contains_value(input, other))),
+        _ if input == other => Ok(Value::Bool(true)),
+        _ if input.as_number().is_some() && other.as_number().is_some() => Ok(Value::Bool(false)),
+        _ => Err(error(format!(
+            "{} ({}) and {} ({}) cannot have their containment checked",
+            input.type_name(),
+            crate::jq::vm::value::truncated_repr(input),
+            other.type_name(),
+            crate::jq::vm::value::truncated_repr(other)
+        ))),
+    }
 }
 
-fn contains_value(a: &Value, b: &Value) -> Result<bool, JqError> {
-    Ok(match (a, b) {
+fn contains_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
         (Value::String(a), Value::String(b)) => a.contains(&**b),
-        (Value::Array(a), Value::Array(b)) => {
-            for b in b.iter() {
-                let mut found = false;
-                for a in a.iter() {
-                    if contains_value(a, b).unwrap_or(false) {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    return Ok(false);
-                }
-            }
-            true
-        }
-        (Value::Object(a), Value::Object(b)) => {
-            for (key, b) in b.iter() {
-                let Some(a) = a.get(key) else {
-                    return Ok(false);
-                };
-                if !contains_value(a, b)? {
-                    return Ok(false);
-                }
-            }
-            true
-        }
-        (a, b) if a.type_name() == b.type_name() => a == b,
-        _ => return Err(error("incompatible types for contains")),
-    })
+        (Value::Array(a), Value::Array(b)) => b
+            .iter()
+            .all(|b| a.iter().any(|a| contains_value(a, b))),
+        (Value::Object(a), Value::Object(b)) => b
+            .iter()
+            .all(|(key, b)| a.get(key).is_some_and(|a| contains_value(a, b))),
+        (a, b) => a == b,
+    }
 }
 
 /// Zips `.` with an already-computed `keys` array (jq's `map([f])`) into the
 /// `[[key], value]` pairs `sort_by_keys`/`group_sorted` expect.
 fn zip_keys(input: &Value, keys: &Value) -> Result<Vec<Value>, JqError> {
-    let items = array(input)?;
-    let keys = array(keys)?;
+    let Value::Array(items) = input else {
+        return Err(pair_error(input, keys, "cannot be sorted, as they are not both arrays"));
+    };
+    let Value::Array(keys) = keys else {
+        return Err(pair_error(input, keys, "cannot be sorted, as they are not both arrays"));
+    };
     if items.len() != keys.len() {
         return Err(error("_sort_by_impl: keys length mismatch"));
     }

@@ -126,10 +126,15 @@ impl Decimal {
 
     /// Exact negation - preserves precision, unlike arithmetic (matches
     /// real jq: "Unary negation preserves numerical precision").
+    ///
+    /// Zero is the one exception: jq negates a decimal as decNumber's
+    /// `0 - x`, which yields a *positive* zero, so the literal `-0` prints
+    /// as `0` (and `0 | -.` does too). Only the `f64` path keeps IEEE's
+    /// signed zero, which is why `-(1-1)` still prints `-0`.
     #[must_use]
     pub fn negate(&self) -> Self {
         Self {
-            sign: -self.sign,
+            sign: if self.is_zero() { 1 } else { -self.sign },
             ..self.clone()
         }
     }

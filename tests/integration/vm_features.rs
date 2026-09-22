@@ -19,6 +19,156 @@ fn run(source: &str, input: &str) -> Result<Vec<Value>, String> {
 }
 
 #[test]
+fn native_last_matches_collection_for_empty_nested_errors_and_bindings() {
+    let legacy = "def last(g): [g] | if length == 0 then empty else .[-1] end; ";
+    for source in [
+        "[last(empty), last(null), last(false), last(1,2,3)]",
+        "[last(range(100)), last(last(range(5)), 7)]",
+        "[1, try last(2, error(\"oops\")) catch ., 3]",
+        "[last(try (1, error(\"oops\")) catch .)]",
+        "[range(3) | last(., . + 10)]",
+        "[last(.a[]), .a]",
+        "[last(.a[] | . as $x | $x + 1)]",
+        "[last([range(3)]), [last(range(3))]]",
+        "[label $out | last(1, break $out), 7]",
+        "def f(g): last(g); [f(empty), f(1, 2)]",
+        "def last(g): 99; last(range(3))",
+    ] {
+        assert_eq!(
+            run(source, r#"{"a":[1,2,3]}"#),
+            run(&format!("{legacy}{source}"), r#"{"a":[1,2,3]}"#),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn rich_containers_preserve_values_order_sharing_and_error_timing() {
+    for (source, input, expected) in [
+        ("[., 1, . + 2]", "3", "[3,1,5]"),
+        ("{a: ., b: 2, c: . + 1}", "3", r#"{"a":3,"b":2,"c":4}"#),
+        (
+            "[{a: (1,2), b: (3,4)}]",
+            "null",
+            r#"[{"a":1,"b":3},{"a":1,"b":4},{"a":2,"b":3},{"a":2,"b":4}]"#,
+        ),
+        (
+            "[. as $saved | (. + [length, 7]), $saved]",
+            "[1,2]",
+            "[[1,2,2,7],[1,2]]",
+        ),
+        (
+            "[. as $saved | (. + {x: .x + 1, y: 3}), $saved]",
+            r#"{"x":1}"#,
+            r#"[{"x":2,"y":3},{"x":1}]"#,
+        ),
+        ("[(null, [9]) + [., 2]]", "1", "[[1,2],[9,1,2]]"),
+        (
+            "[(null, {z:9}) + {x:(1,2)}]",
+            "null",
+            r#"[{"x":1},{"z":9,"x":1},{"x":2},{"z":9,"x":2}]"#,
+        ),
+        ("{a:1,a:2,b:3} | keys_unsorted", "null", r#"["a","b"]"#),
+        (
+            ". + {a:2,b:.a} | keys_unsorted",
+            r#"{"z":0,"a":1}"#,
+            r#"["z","a","b"]"#,
+        ),
+        (
+            "[try (error(\"left\") + {x:error(\"right\")}) catch .]",
+            "null",
+            r#"["right"]"#,
+        ),
+        ("[try [1,error(\"x\")] catch .]", "null", r#"["x"]"#),
+        ("[{x:empty}, 1]", "null", "[1]"),
+        ("[null + [.], null + {x:.}]", "2", r#"[[2],{"x":2}]"#),
+        (
+            "{a:.,b:.,c:.,d:.,e:.,f:.,g:.,h:.,i:.,j:.}",
+            "1",
+            r#"{"a":1,"b":1,"c":1,"d":1,"e":1,"f":1,"g":1,"h":1,"i":1,"j":1}"#,
+        ),
+    ] {
+        assert_eq!(
+            run(source, input).unwrap(),
+            vec![data::parse_json_str(expected).unwrap()],
+            "{source}"
+        );
+    }
+    // Type errors must retain ordinary '+' payloads, including RHS contents.
+    for source in [
+        "1 + [.]",
+        "1 + {x:.}",
+        "[] + {x:.}",
+        "{} + [.]",
+        "[path([.a])]",
+    ] {
+        let generic = source
+            .replace("[.]", "([.] | . as $x | $x)")
+            .replace("{x:.}", "({x:.} | . as $x | $x)");
+        assert_eq!(run(source, "2"), run(&generic, "2"), "{source}");
+    }
+}
+
+#[test]
+fn constant_paths_match_dynamic_keys_including_tracking_and_errors() {
+    for input in [
+        r#"{"a":{"b":[{"c":1},{"c":2}]}}"#,
+        "null",
+        "42",
+        "[]",
+        r#"{"a":false}"#,
+    ] {
+        for filter in [
+            ".a.b",
+            ".a.b[].c",
+            ".a.b[0].c",
+            ".a.b[0:1][] .c",
+            "path(.a.b)",
+            "path(.a.b[].c)",
+            ".a.b = 3",
+            ".a.b |= . + 1",
+            "try .a.b catch .",
+            ".a.b?",
+            "path((.a, .a).b)",
+            "try path((.a + 0).b) catch .",
+            "path(.[path(.a)[0]].b)",
+        ] {
+            let dynamic = filter
+                .replace(".a", ".[ $a ]")
+                .replace(".b", ".[ $b ]")
+                .replace(".c", ".[ $c ]");
+            let dynamic = format!(r#""a" as $a | "b" as $b | "c" as $c | {dynamic}"#);
+            assert_eq!(
+                run(filter, input),
+                run(&dynamic, input),
+                "{filter} on {input}"
+            );
+        }
+    }
+}
+
+#[test]
+fn literal_folding_preserves_precision_errors_and_streams() {
+    for (source, expected) in [
+        ("[(2 + 3) * 4, 7 % 3, 1 < 2]", "[20,1,true]"),
+        (
+            "[13911860366432393 - 10, -13911860366432393]",
+            "[13911860366432382,-13911860366432393]",
+        ),
+        ("[(1,2) + (10,20)]", "[11,12,21,22]"),
+        ("[if false then 1/0 else 3 end, try (1/0) catch 4]", "[3,4]"),
+        (r#"[" a " | trim, "B" | ascii_downcase]"#, r#"["a","b"]"#),
+        ("[last(range(10)), last(empty)]", "[9]"),
+    ] {
+        assert_eq!(
+            run(source, "null").unwrap(),
+            vec![data::parse_json_str(expected).unwrap()],
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn native_ascii_case_preserves_unicode_types_and_saved_values() {
     for (source, input, expected) in [
         (
@@ -92,7 +242,7 @@ fn string_accumulation_preserves_shared_inputs_and_generator_snapshots() {
             r#"[foreach range(3) as $i (. ; . + "x"; .)]"#,
             r#"["abx","abxx","abxxx"]"#,
         ),
-        (r#"[., (. + .), .]"#, r#"["ab","abab","ab"]"#),
+        (r"[., (. + .), .]", r#"["ab","abab","ab"]"#),
         (
             r#"[reduce range(10000) as $i (""; . + "x") | length]"#,
             "[10000]",

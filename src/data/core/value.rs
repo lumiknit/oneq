@@ -85,7 +85,10 @@ impl Value {
     ) -> std::vec::IntoIter<(&ObjectKey, &Self)> {
         let mut entries: Vec<_> = map.iter().collect();
         if sorted {
-            entries.sort_by_key(|(key, _)| strs::resolve(**key).expect("interned object key"));
+            let mut order: Vec<(ObjectKey, usize)> =
+                entries.iter().enumerate().map(|(i, (k, _))| (**k, i)).collect();
+            strs::sort_symbols_by_str(&mut order);
+            entries = order.into_iter().map(|(_, i)| entries[i]).collect();
         }
         entries.into_iter()
     }
@@ -299,8 +302,11 @@ impl Display for Value {
             Self::Object(v) => {
                 f.write_str("{")?;
                 // Sort iteration by key for consistent output, but don't mutate the object.
-                let mut v: Vec<_> = v.iter().collect();
-                v.sort_by_key(|(k, _)| strs::resolve(**k).unwrap());
+                let v: Vec<_> = v.iter().collect();
+                let mut order: Vec<(ObjectKey, usize)> =
+                    v.iter().enumerate().map(|(i, (k, _))| (**k, i)).collect();
+                strs::sort_symbols_by_str(&mut order);
+                let v: Vec<_> = order.into_iter().map(|(_, i)| v[i]).collect();
                 for (i, v) in v.iter().enumerate() {
                     if i > 0 {
                         f.write_str(",")?;
@@ -333,7 +339,10 @@ impl Value {
                 } else {
                     f64::MAX
                 };
-                write!(f, "{n}").unwrap();
+                // The same formatter the output path uses: Rust's `Display`
+                // never switches to an exponent, so `tostring` would spell
+                // `1e+20` out as twenty-one digits.
+                f.push_str(&crate::data::formats::json::format_float(n));
             }
             Self::String(s) => {
                 f.push('"');

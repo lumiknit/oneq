@@ -106,7 +106,7 @@ fn effects_errors_and_collection_boundaries_survive_inlining() {
                     },
                 )
                 .unwrap();
-            let mut host = InputHost::new([1, 2, 3].into_iter().map(|n| Ok(Value::int(n as i64))));
+            let mut host = InputHost::new([1, 2, 3].into_iter().map(|n| Ok(Value::int(i64::from(n)))));
             let values = session
                 .run(entry, &mut host, InputMode::Null)
                 .unwrap()
@@ -117,7 +117,7 @@ fn effects_errors_and_collection_boundaries_survive_inlining() {
                 oneq::jq::vm::host::Host::next_input(&mut host)
                     .unwrap()
                     .unwrap(),
-                Value::int(remaining as i64)
+                Value::int(i64::from(remaining))
             );
         }
     }

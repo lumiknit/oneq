@@ -120,3 +120,12 @@ pub fn resolve(symbol: Symbol) -> Option<&'static str> {
     let string_list = STRING_LIST.read().unwrap();
     string_list.get(symbol as usize).copied()
 }
+
+/// Sorts `(symbol, tag)` pairs by the symbol's resolved string. `tag` is
+/// caller-defined payload (e.g. an index for indirect reordering, or an
+/// unused dummy value) carried along so callers don't need a bespoke
+/// generic sort closure at each call site, which would otherwise bloat the
+/// binary with a separate monomorphized sort per call site.
+pub fn sort_symbols_by_str(items: &mut [(Symbol, usize)]) {
+    items.sort_unstable_by_key(|&(sym, _)| resolve(sym).unwrap_or(""));
+}

@@ -171,6 +171,12 @@ fn summarize(
             }
             result
         }
+        Expr::Last(body) => {
+            let mut s = summarize(ir, *body, active);
+            s.facts.cardinality = Cardinality::ZeroOrOne;
+            s.observations.may_empty = true;
+            s
+        }
         Expr::Array(body) => {
             let mut s = summarize(ir, *body, active);
             s.facts.cardinality = Cardinality::One;
@@ -244,6 +250,11 @@ fn summarize(
             s.observations.may_halt = true;
             s
         }
+        Expr::ConstPath { base, .. } => {
+            let mut s = summarize(ir, *base, active);
+            s.facts.effects.may_error = true;
+            s
+        }
         Expr::Path { base, steps } => {
             let mut s = summarize(ir, *base, active);
             for step in steps {
@@ -259,7 +270,7 @@ fn summarize(
                             s = combine(s, summarize(ir, *i, active));
                         }
                     }
-                    super::super::ir::PathStep::Iterate => {}
+                    super::super::ir::PathStep::Iterate | super::super::ir::PathStep::Key(_) => {}
                 }
             }
             s

@@ -1,7 +1,9 @@
 //! Internal compilation pipeline; callers append through Session.
 pub mod analyze;
 pub mod calc;
+mod containers;
 mod emit;
+mod ir_const_fold;
 mod lower;
 pub mod modules;
 pub(crate) mod rewrite;

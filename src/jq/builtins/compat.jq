@@ -1,5 +1,4 @@
 # jq-language additions absent from the unchanged upstream builtin.jq fixture.
-def last(g): [g] | if length == 0 then empty else .[-1] end;
 def leaf_paths: paths(scalars);
 def toboolean:
   if . == true or . == "true" then true

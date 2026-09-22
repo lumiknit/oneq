@@ -11,6 +11,50 @@ use oneq::{
 use std::{fs, path::Path, rc::Rc};
 
 #[test]
+fn constant_folding_compacts_ir_and_keeps_runtime_errors() {
+    for inline in [false, true] {
+        let mut session = Session::new();
+        for (source, expected) in [
+            ("(2 + 3) * 4", "Literal(Value(Float(20.0)))"),
+            (
+                r#""  AbC  " | trim | ascii_downcase"#,
+                "Literal(Value(String(\"abc\")))",
+            ),
+            (".customer.address.region", "ConstPath"),
+        ] {
+            let entry = session
+                .append(
+                    source,
+                    CompileOptions {
+                        inline,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap();
+            let ir = session.dump(entry).unwrap();
+            assert!(ir.contains(expected), "{source}: {ir}");
+            assert!(!ir.contains("BuiltinCall"), "{source}: {ir}");
+            if source.starts_with('.') {
+                assert_eq!(ir.lines().count(), 2, "{ir}");
+                assert!(!ir.contains("Literal"), "{ir}");
+            } else {
+                assert_eq!(ir.lines().count(), 1, "{ir}");
+            }
+        }
+        let entry = session
+            .append(
+                "try (1 / 0) catch .",
+                CompileOptions {
+                    inline,
+                    ..CompileOptions::default()
+                },
+            )
+            .unwrap();
+        assert!(session.dump(entry).unwrap().contains("BuiltinCall"));
+    }
+}
+
+#[test]
 fn jq_library_definitions_have_no_duplicate_native_specs() {
     for source in [
         include_str!("../../src/jq/builtins/builtin.jq"),

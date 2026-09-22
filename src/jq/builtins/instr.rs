@@ -161,7 +161,7 @@ macro_rules! define_instructions {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum BuiltinInstr {
             $($variant,)*
-            Add, Range, Path, Empty, Error, Halt, HaltError,
+            Add, Range, Path, Last, Empty, Error, Halt, HaltError,
             Input, Env, InputFilename, InputLineNumber, ModuleMeta,
             HaveDecnum, HaveLiteralNumbers,
         }
@@ -180,7 +180,7 @@ macro_rules! define_instructions {
                 match self {
                     $(Self::$variant => $arity,)*
                     Self::Add | Self::Range => 2,
-                    Self::Path | Self::HaltError => 1,
+                    Self::Path | Self::Last | Self::HaltError => 1,
                     Self::Empty | Self::Error | Self::Halt | Self::Input |
                     Self::Env | Self::InputFilename | Self::InputLineNumber |
                     Self::ModuleMeta | Self::HaveDecnum | Self::HaveLiteralNumbers => 0,

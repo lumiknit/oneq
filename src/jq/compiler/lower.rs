@@ -362,8 +362,39 @@ fn lower_expr_inner(
             let mut pairs = Vec::with_capacity(children.len() / 2);
             let mut rest = children.into_iter();
             while let (Some(key), Some(value)) = (rest.next(), rest.next()) {
+                // Only a key spelled as a literal is rejected here, the way jq
+                // does. Lowering also turns `(empty, 1)` into a literal, but
+                // that object may never be built, so such a key has to keep
+                // failing at run time. Keys jq folds and 1q does not
+                // (`{(1+1): 2}`) just fail later, with the same message.
+                let literal_key = matches!(
+                    key.tag,
+                    PairTag::Int
+                        | PairTag::Float
+                        | PairTag::String
+                        | PairTag::Array
+                        | PairTag::Object
+                        | PairTag::Loc
+                ) || (key.tag == PairTag::Invoke && key.children.is_empty());
                 let key = lower_expr(ir, key, symbols, options, false)?;
                 let value = lower_expr(ir, value, symbols, options, false)?;
+                if literal_key
+                    && let Expr::Literal(literal) = &ir.nodes[key.0].expr
+                {
+                    let folded = match literal {
+                        Literal::Value(value) => value.clone(),
+                        Literal::Number(raw) => {
+                            crate::data::parse_json_str(raw).map_err(CompileError)?
+                        }
+                    };
+                    if !matches!(folded, Value::String(_)) {
+                        return Err(CompileError(format!(
+                            "Cannot use {} ({}) as object key",
+                            folded.type_name(),
+                            crate::jq::vm::value::truncated_repr(&folded)
+                        )));
+                    }
+                }
                 pairs.push((key, value));
             }
             Expr::Object(pairs)
@@ -645,6 +676,7 @@ fn lower_call(
             .ok_or_else(|| CompileError(format!("unsupported filter {name}/{}", args.len())))?;
         match builtins::spec(builtin).instr {
             builtins::BuiltinInstr::Path => Expr::Paths(args[0]),
+            builtins::BuiltinInstr::Last => Expr::Last(args[0]),
             builtins::BuiltinInstr::Empty => Expr::Concat(vec![]),
             _ => Expr::BuiltinCall { builtin, args },
         }

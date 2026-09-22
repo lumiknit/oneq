@@ -9,7 +9,7 @@ use crate::{
 };
 
 const OUTPUT_LIMIT: usize = 100_000;
-const STEP_LIMIT: usize = 128 * 1024 * 1024;
+const STEP_LIMIT: usize = 2_100_000_000;
 const RESUME_QUANTUM: usize = 128 * 1024;
 
 /// A REPL completion candidate: the text to insert (`replacement`) versus

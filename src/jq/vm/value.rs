@@ -94,7 +94,16 @@ pub fn slice(base: &Value, start: &Value, end: &Value) -> Result<Value, JqError>
         Value::Null => return Ok(Value::Null),
         Value::Array(a) => a.len(),
         Value::String(s) => s.chars().count(),
-        _ => return Err(error(format!("Cannot slice {}", base.type_name()))),
+        // jq has no dedicated slice error: a slice is indexing with a
+        // `{start, end}` object, and the message says exactly that.
+        _ => {
+            return Err(error(format!(
+                "Cannot index {} with object ({{\"start\":{},\"end\":{}}})",
+                base.type_name(),
+                start.to_compact_json(),
+                end.to_compact_json()
+            )));
+        }
     };
     // jq rounds the start bound down and the end bound up (so
     // `.[1.2:3.5]` keeps indices 1..4, i.e. 3 elements) - and treats `nan`
@@ -205,8 +214,21 @@ pub fn setpath(root: &Value, path: &[Value], replacement: &Value) -> Result<Valu
             if matches!(root, Value::String(_)) {
                 return Err(error("Cannot update string slices"));
             }
-            let Value::Array(array) = root else {
-                return Err(error("slice assignment requires an array"));
+            let empty = Rc::new(Vec::new());
+            let array = match root {
+                Value::Array(array) => array,
+                // Path auto-creation, as in the numeric-index branch above:
+                // jq grows a fresh array out of null, so
+                // `null | .[0:1] = [1]` is `[1]`, not a type error.
+                Value::Null => &empty,
+                _ => {
+                    return Err(error(format!(
+                        "Cannot index {} with {} ({})",
+                        root.type_name(),
+                        key.type_name(),
+                        truncated_repr(key)
+                    )));
+                }
             };
             let start = bounds.get(&strs::keyword_start()).unwrap_or(&Value::Null);
             let end = bounds.get(&strs::keyword_end()).unwrap_or(&Value::Null);
@@ -227,7 +249,7 @@ pub fn setpath(root: &Value, path: &[Value], replacement: &Value) -> Result<Valu
             let end = (bound(end, array.len() as f64)?.ceil() as usize).clamp(start, array.len());
             let old = Value::Array(Rc::new(array[start..end].to_vec()));
             let Value::Array(new) = setpath(&old, rest, replacement)? else {
-                return Err(error("slice replacement must be an array"));
+                return Err(error("A slice of an array can only be assigned another array"));
             };
             let mut result = array.as_ref().clone();
             result.splice(start..end, new.iter().cloned());

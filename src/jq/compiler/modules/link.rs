@@ -118,6 +118,7 @@ pub fn compile(
     } else {
         TemplateStore::default()
     };
+    super::super::ir_const_fold::optimize(&mut ir, &mut entry);
     let mut chunk = emit::emit(ir, entry, options)?;
     chunk.data_bindings = data_bindings;
     chunk.definition_only = options.repl && definition_only(&graph.entry().source.root);

@@ -738,7 +738,7 @@ fn push_indent(out: &mut String, opts: &render::Options, depth: usize) {
 /// real jq across the plain/scientific boundary in both directions (e.g.
 /// `1e15` prints plain, `1e16` doesn't, `13911860366432382.0` - 17
 /// significant digits - prints plain even though its exponent is 16).
-fn format_float(f: f64) -> String {
+pub(crate) fn format_float(f: f64) -> String {
     if f == 0.0 {
         return if f.is_sign_negative() {
             "-0".to_string()

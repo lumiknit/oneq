@@ -145,19 +145,16 @@ fn xml_streams_partial_events_before_truncation_error() {
     // A document missing its closing tags: the inner `<b>` element and the
     // outer `<a>` never close - `pump()` should still have emitted events
     // for `id`/`x` (the fully-closed grandchild) before hitting EOF.
-    let truncated = r#"<root><a><b><x>1</x>"#;
+    let truncated = r"<root><a><b><x>1</x>";
     let mut parser =
         oneq::data::AnyParser::new(DataFormat::Xml, Input::new_string(truncated.to_owned()))
             .unwrap();
     let mut items = Vec::new();
     let mut saw_error = false;
     for item in &mut parser {
-        match item {
-            Ok(stream_item) => items.push(stream_item),
-            Err(_) => {
-                saw_error = true;
-                break;
-            }
+        if let Ok(stream_item) = item { items.push(stream_item) } else {
+            saw_error = true;
+            break;
         }
     }
     assert!(
@@ -191,12 +188,9 @@ fn yaml_streams_partial_events_before_truncation_error() {
     let mut items = Vec::new();
     let mut saw_error = false;
     for item in &mut parser {
-        match item {
-            Ok(stream_item) => items.push(stream_item),
-            Err(_) => {
-                saw_error = true;
-                break;
-            }
+        if let Ok(stream_item) = item { items.push(stream_item) } else {
+            saw_error = true;
+            break;
         }
     }
     assert!(saw_error, "expected an indentation error for `c`");
@@ -317,7 +311,7 @@ fn yaml_alias_streams_as_a_single_event_not_leaf_by_leaf() {
     )
     .collect::<Result<_, _>>()
     .unwrap();
-    let rendered: Vec<String> = events.iter().map(|v| v.to_string()).collect();
+    let rendered: Vec<String> = events.iter().map(std::string::ToString::to_string).collect();
     assert_eq!(
         rendered,
         vec![r#"[["a"],{"a":20}]"#, r#"[["c"],{"a":20}]"#, r#"[["c"]]"#,]
@@ -336,7 +330,7 @@ fn yaml_block_style_mapping_still_streams_leaf_by_leaf() {
     )
     .collect::<Result<_, _>>()
     .unwrap();
-    let rendered: Vec<String> = events.iter().map(|v| v.to_string()).collect();
+    let rendered: Vec<String> = events.iter().map(std::string::ToString::to_string).collect();
     assert_eq!(
         rendered,
         vec![
@@ -376,7 +370,7 @@ fn yaml_merge_key_stream_events_rely_on_last_write_wins() {
     )
     .collect::<Result<_, _>>()
     .unwrap();
-    let rendered: Vec<String> = events.iter().map(|v| v.to_string()).collect();
+    let rendered: Vec<String> = events.iter().map(std::string::ToString::to_string).collect();
     assert_eq!(
         rendered,
         vec![

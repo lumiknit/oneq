@@ -12,7 +12,7 @@ use oneq::{
 use std::{cell::Cell, rc::Rc};
 
 fn number(n: i64) -> Value {
-    Value::int(n as i64)
+    Value::int(n)
 }
 fn append(session: &mut Session, source: &str) -> EntryId {
     session.append(source, CompileOptions::default()).unwrap()

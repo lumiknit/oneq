@@ -312,14 +312,18 @@ pub(super) fn optimize(
         false,
     );
     prune_functions(ir, *entry);
+    compact(ir, entry);
+    templates.retain(|id, _| ir.export_functions.contains(id) && !inherited.contains_key(id));
+    templates
+}
+
+pub(super) fn compact(ir: &mut Ir, entry: &mut ExprId) {
     let compact = Fragment::capture(ir, *entry);
     let mut output = compact.ir;
     output.export_bindings = std::mem::take(&mut ir.export_bindings);
     output.export_functions = std::mem::take(&mut ir.export_functions);
     *entry = compact.root;
     *ir = output;
-    templates.retain(|id, _| ir.export_functions.contains(id) && !inherited.contains_key(id));
-    templates
 }
 
 fn prune_functions(ir: &mut Ir, entry: ExprId) {

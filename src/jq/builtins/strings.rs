@@ -11,7 +11,8 @@ pub fn string(value: &Value) -> Result<&str, JqError> {
 }
 pub fn utf8bytelength(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     match input {
-        Value::String(s) => Ok(Value::int(s.len() as i64)),
+        // A double, like `length`: see the note there about signed zero.
+        Value::String(s) => Ok(Value::Float(s.len() as f64)),
         _ => Err(error(format!(
             "{} ({}) only strings have UTF-8 byte length",
             input.type_name(),
@@ -100,8 +101,9 @@ pub fn rtrim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::String(s.trim_end().to_string().into()))
 }
 pub fn split(input: &Value, args: &[Value]) -> Result<Value, JqError> {
-    let s = string(input)?;
-    let separator = string(&args[0])?;
+    let split_error = || error("split input and separator must be strings");
+    let s = string(input).map_err(|_| split_error())?;
+    let separator = string(&args[0]).map_err(|_| split_error())?;
     Ok(Value::Array(Rc::new(if separator.is_empty() {
         if s.is_empty() {
             vec![Value::String(String::new().into())]
@@ -272,6 +274,7 @@ pub fn format(input: &Value, name: &str) -> Result<Value, JqError> {
             let mut out = Vec::new();
             let mut buffer = 0u32;
             let mut bits = 0;
+            let mut sextets = 0usize;
             for b in text.bytes().filter(|b| !b.is_ascii_whitespace()) {
                 if b == b'=' {
                     break;
@@ -282,14 +285,28 @@ pub fn format(input: &Value, name: &str) -> Result<Value, JqError> {
                     b'0'..=b'9' => b - b'0' + 52,
                     b'+' => 62,
                     b'/' => 63,
-                    _ => return Err(error("invalid base64")),
+                    _ => {
+                        return Err(error(format!(
+                            "string ({}) is not valid base64 data",
+                            crate::data::Value::String(text.to_string().into()).to_compact_json()
+                        )));
+                    }
                 };
                 buffer = (buffer << 6) | u32::from(n);
                 bits += 6;
+                sextets += 1;
                 if bits >= 8 {
                     bits -= 8;
                     out.push((buffer >> bits) as u8);
                 }
+            }
+            // A group of one sextet carries 6 bits, too few for a byte; jq
+            // rejects it rather than dropping it.
+            if sextets % 4 == 1 {
+                return Err(error(format!(
+                    "string ({}) trailing base64 byte found",
+                    crate::data::Value::String(text.to_string().into()).to_compact_json()
+                )));
             }
             String::from_utf8_lossy(&out).into_owned()
         }
@@ -371,8 +388,12 @@ pub fn format(input: &Value, name: &str) -> Result<Value, JqError> {
             for v in values {
                 result.push(match v {
                     Value::String(s) => format!("'{}'", s.replace('\'', "'\\''")),
-                    Value::Array(_) | Value::Object(_) => {
-                        return Err(error("cannot escape container for shell"));
+                    v @ (Value::Array(_) | Value::Object(_)) => {
+                        return Err(error(format!(
+                            "{} ({}) can not be escaped for shell",
+                            v.type_name(),
+                            crate::jq::vm::value::truncated_repr(&v)
+                        )));
                     }
                     v => v.to_compact_json(),
                 });
@@ -381,7 +402,12 @@ pub fn format(input: &Value, name: &str) -> Result<Value, JqError> {
         }
         "@csv" | "@tsv" => {
             let Value::Array(values) = input else {
-                return Err(error("CSV/TSV formatting requires an array"));
+                return Err(error(format!(
+                    "{} ({}) cannot be {}-formatted, only array",
+                    input.type_name(),
+                    crate::jq::vm::value::truncated_repr(input),
+                    &name[1..]
+                )));
             };
             let mut fields = Vec::new();
             for v in values.iter() {

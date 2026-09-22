@@ -165,6 +165,23 @@ fn emit_expr(
     code: &mut Vec<Instruction>,
     slots: &mut Slots,
 ) -> Result<(), CompileError> {
+    // Infix operands evaluate right first. Retain the RHS fields on the stack
+    // while evaluating the LHS, then extend without constructing a temporary Rc.
+    if let Expr::BuiltinCall { builtin, args } = &ir.nodes[entry.0].expr
+        && crate::jq::builtins::spec(*builtin).instr == crate::jq::builtins::BuiltinInstr::Add
+        && let Some((plan, fields)) = super::containers::plan(ir, args[1])
+    {
+        emit_fields(ir, &fields, code, slots)?;
+        code.push(Instruction::LoadSaved(fields.len()));
+        emit_expr(ir, args[0], code, slots)?;
+        code.push(Instruction::ExtendContainer(plan));
+        return Ok(());
+    }
+    if let Some((plan, fields)) = super::containers::plan(ir, entry) {
+        emit_fields(ir, &fields, code, slots)?;
+        code.push(Instruction::MakeContainer(plan));
+        return Ok(());
+    }
     match &ir.nodes[entry.0].expr {
         Expr::Input => {}
         Expr::Paths(body) => {
@@ -361,11 +378,16 @@ fn emit_expr(
             emit_expr(ir, *no, code, slots)?;
             code[end] = Instruction::Jump(code.len());
         }
+        Expr::ConstPath { base, steps } => {
+            emit_expr(ir, *base, code, slots)?;
+            code.push(Instruction::ConstPath(steps.clone()));
+        }
         Expr::Path { base, steps } => {
             code.push(Instruction::Push);
             emit_expr(ir, *base, code, slots)?;
             for step in steps {
                 match step {
+                    PathStep::Key(key) => code.push(Instruction::ConstPath(vec![*key])),
                     PathStep::Iterate => code.push(Instruction::Iterate),
                     PathStep::Index(index) => {
                         code.push(Instruction::Push);
@@ -403,6 +425,15 @@ fn emit_expr(
                 }
             }
             code.push(Instruction::Drop);
+        }
+        Expr::Last(inner) => {
+            let begin = code.len();
+            code.push(Instruction::BeginCollect(0));
+            emit_expr(ir, *inner, code, slots)?;
+            code.push(Instruction::LastItem);
+            code.push(Instruction::Backtrack);
+            code[begin] = Instruction::BeginCollect(code.len());
+            code.push(Instruction::EndLast);
         }
         Expr::Array(inner) => {
             let begin = code.len();
@@ -482,6 +513,21 @@ fn emit_expr(
     Ok(())
 }
 
+fn emit_fields(
+    ir: &Ir,
+    fields: &[ExprId],
+    code: &mut Vec<Instruction>,
+    slots: &mut Slots,
+) -> Result<(), CompileError> {
+    code.push(Instruction::Push);
+    for (depth, field) in fields.iter().enumerate() {
+        code.push(Instruction::LoadSaved(depth));
+        emit_expr(ir, *field, code, slots)?;
+        code.push(Instruction::Push);
+    }
+    Ok(())
+}
+
 fn emit_pattern(
     ir: &Ir,
     id: PatternId,
@@ -491,12 +537,30 @@ fn emit_pattern(
     match &ir.patterns[id.0] {
         Pattern::Binding(id) => code.push(slots.bind(ir, *id)),
         Pattern::Array(items) => {
-            for (index, pattern) in items.iter().enumerate() {
+            // Indexed back to front, like jq, which shows when the indexing
+            // itself fails: `{} | . as [$a, $b]` reports index 1. A name used
+            // twice shares one binding though, and there the *last* write has
+            // to win (`[1, 2] | . as [$a, $a] | $a` is 2), so a pattern like
+            // that keeps its order.
+            let mut bound = Vec::new();
+            let mut shared = false;
+            for item in items {
+                let mut ids = Vec::new();
+                pattern_bindings(ir, *item, &mut ids);
+                shared |= ids.iter().any(|id| bound.contains(id));
+                bound.extend(ids);
+            }
+            let order: Vec<usize> = if shared {
+                (0..items.len()).collect()
+            } else {
+                (0..items.len()).rev().collect()
+            };
+            for index in order {
                 code.push(Instruction::Push);
                 code.push(Instruction::Push);
                 code.push(Instruction::Load(crate::data::Value::int(index as i64)));
                 code.push(Instruction::Index);
-                emit_pattern(ir, *pattern, code, slots)?;
+                emit_pattern(ir, items[index], code, slots)?;
                 code.push(Instruction::Pop);
             }
         }
@@ -542,6 +606,53 @@ fn pattern_bindings(ir: &Ir, pattern: PatternId, bindings: &mut Vec<crate::jq::i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_arrays_and_object_extensions_use_container_plans() {
+        use crate::jq::vm::code::ContainerPlan;
+        let mut ir = Ir::default();
+        let input = ir.push(Expr::Input, None);
+        for count in [1, 2, 4] {
+            let items = ir.push(Expr::Concat(vec![input; count]), None);
+            let array = ir.push(Expr::Array(items), None);
+            let chunk = emit(ir.clone(), array, &CompileOptions::default()).unwrap();
+            assert!(
+                chunk.code.iter().any(|op| matches!(op,
+                Instruction::MakeContainer(ContainerPlan::Array(values)) if values.len() == count))
+            );
+            assert!(
+                !chunk
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, Instruction::BeginCollect(_)))
+            );
+        }
+
+        let key = ir.push(
+            Expr::Literal(Literal::Value(data::Value::String("x".to_owned().into()))),
+            None,
+        );
+        let object = ir.push(Expr::Object(vec![(key, input)]), None);
+        let builtin = crate::jq::builtins::lookup_symbol(crate::strs::intern("+"), 2).unwrap();
+        let add = ir.push(
+            Expr::BuiltinCall {
+                builtin,
+                args: vec![input, object],
+            },
+            None,
+        );
+        let chunk = emit(ir, add, &CompileOptions::default()).unwrap();
+        assert!(
+            chunk
+                .code
+                .iter()
+                .any(|op| matches!(op, Instruction::ExtendContainer(ContainerPlan::Object(_))))
+        );
+        assert!(!chunk.code.iter().any(|op| matches!(
+            op,
+            Instruction::MakeObject(_) | Instruction::MakeContainer(_)
+        )));
+    }
 
     #[test]
     fn sparse_ir_bindings_get_dense_scope_slots() {

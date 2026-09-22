@@ -52,10 +52,16 @@ pub enum Expr {
         body: ExprId,
     },
     Array(ExprId),
+    Last(ExprId),
     Object(Vec<(ExprId, ExprId)>),
     Path {
         base: ExprId,
         steps: Vec<PathStep>,
+    },
+    /// Interned object keys; no key expressions or runtime interning.
+    ConstPath {
+        base: ExprId,
+        steps: Vec<crate::strs::Symbol>,
     },
     If {
         condition: ExprId,
@@ -93,6 +99,7 @@ pub enum Expr {
 #[derive(Clone, Debug)]
 pub enum PathStep {
     Index(ExprId),
+    Key(crate::strs::Symbol),
     Iterate,
     Slice {
         start: Option<ExprId>,

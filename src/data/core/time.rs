@@ -102,7 +102,46 @@ pub fn seconds_to_ymdhms(secs: f64) -> Option<(i64, i64, i64, i64, i64, i64)> {
 pub fn strftime(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64, fmt: &str) -> Option<String> {
     let date = NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32)?;
     let time = NaiveTime::from_hms_opt(h as u32, mi as u32, s as u32)?;
-    Some(NaiveDateTime::new(date, time).format(fmt).to_string())
+    let fmt = if (0..=9999).contains(&y) {
+        std::borrow::Cow::Borrowed(fmt)
+    } else {
+        std::borrow::Cow::Owned(spell_year(fmt, y))
+    };
+    Some(NaiveDateTime::new(date, time).format(&fmt).to_string())
+}
+
+/// chrono writes a year outside 0-9999 in ISO 8601's expanded form, with a
+/// sign: `+255479`. jq's `strftime` writes the plain number, so the year is
+/// substituted into the format string before chrono sees it.
+fn spell_year(fmt: &str, year: i64) -> String {
+    let mut out = String::with_capacity(fmt.len());
+    let mut rest = fmt;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        let mut chars = rest[at..].chars();
+        chars.next();
+        match chars.next() {
+            Some(c @ ('Y' | 'G')) => {
+                let _ = c;
+                out.push_str(&year.to_string());
+            }
+            // %F is %Y-%m-%d.
+            Some('F') => {
+                out.push_str(&year.to_string());
+                out.push_str("-%m-%d");
+            }
+            // Anything else is copied through, including a literal `%%` -
+            // whose `Y` must stay text.
+            Some(c) => {
+                out.push('%');
+                out.push(c);
+            }
+            None => out.push('%'),
+        }
+        rest = chars.as_str();
+    }
+    out.push_str(rest);
+    out
 }
 
 /// jq's broken-down time: `(year, month 0-based, day, hour, min, sec, wday,

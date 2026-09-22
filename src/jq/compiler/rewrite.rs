@@ -26,7 +26,9 @@ pub(super) fn map_expr(expr: &mut Expr, map: &mut impl Mapper) {
         Expr::Input | Expr::Literal(_) => {}
         Expr::Read(id) => *id = map.binding(*id),
         Expr::Break(id) => *id = map.label(*id),
-        Expr::Paths(id) | Expr::Array(id) => *id = map.expr(*id),
+        Expr::Paths(id) | Expr::Array(id) | Expr::Last(id) | Expr::ConstPath { base: id, .. } => {
+            *id = map.expr(*id);
+        }
         Expr::Pipe(ids) | Expr::Concat(ids) => {
             for id in ids {
                 *id = map.expr(*id);
@@ -72,7 +74,7 @@ pub(super) fn map_expr(expr: &mut Expr, map: &mut impl Mapper) {
             for step in steps {
                 match step {
                     PathStep::Index(id) => *id = map.expr(*id),
-                    PathStep::Iterate => {}
+                    PathStep::Iterate | PathStep::Key(_) => {}
                     PathStep::Slice { start, end } => {
                         for id in start.iter_mut().chain(end.iter_mut()) {
                             *id = map.expr(*id);
