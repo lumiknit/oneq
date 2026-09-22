@@ -366,7 +366,9 @@ fn build_table(
                 }
             }
             if sorted {
-                keys.sort_by_key(|k| strs::resolve(*k).unwrap());
+                let mut order: Vec<(ObjectKey, usize)> = keys.iter().map(|k| (*k, 0)).collect();
+                strs::sort_symbols_by_str(&mut order);
+                keys = order.into_iter().map(|(k, _)| k).collect();
             }
             let head = header.then(|| {
                 keys.iter()

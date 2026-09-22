@@ -8,6 +8,12 @@ use crate::{
     },
 };
 
+/// The jq-language prelude sources, embedded once here so `session.rs` and
+/// `scalar.rs` share the same binary data instead of each holding their own
+/// `include_str!` copy.
+pub(crate) const BUILTIN_JQ: &str = include_str!("builtin.jq");
+pub(crate) const COMPAT_JQ: &str = include_str!("compat.jq");
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParamMode {
     Value,
@@ -274,6 +280,14 @@ pub const fn registry() -> &'static [BuiltinSpec] {
             calc: None,
             docs: "Stream selected paths.",
         },
+        BuiltinSpec {
+            name: "last",
+            params: &[ParamMode::Filter],
+            facts: STREAM,
+            instr: BuiltinInstr::Last,
+            calc: None,
+            docs: "Consume a filter, retaining only its last output.",
+        },
         scalar_spec!("getpath", [ParamMode::Value], GetPath),
         scalar_spec!("delpaths", [ParamMode::Value], DelPaths),
         scalar_spec!("setpath", [ParamMode::Value, ParamMode::Value], SetPath),
@@ -536,6 +550,11 @@ pub enum NativeState {
         next: f64,
         end: f64,
         step: f64,
+        /// The `from` argument, handed back unchanged as the first output the
+        /// way jq's own `range/2` does. It matters because a literal keeps its
+        /// exact decimal value: `range(0; 1) | -.` is `0`, not `-0`, and only
+        /// the computed steps after it go through `f64`.
+        start: Option<Value>,
     },
 }
 
@@ -544,6 +563,7 @@ pub(crate) const fn range() -> NativeState {
         next: 0.0,
         end: 0.0,
         step: 1.0,
+        start: None,
     }
 }
 
@@ -555,11 +575,21 @@ pub enum NativeEvent {
 
 /// Range advancement is infallible after argument validation. Share the
 /// floating-point termination rule with the VM's backtracking path.
-pub(crate) fn range_next(next: &mut f64, end: f64, step: f64) -> Option<Value> {
+pub(crate) fn range_next(
+    next: &mut f64,
+    end: f64,
+    step: f64,
+    start: &mut Option<Value>,
+) -> Option<Value> {
     if (step > 0.0 && *next < end) || (step < 0.0 && *next > end) {
-        let value = *next;
+        // Past 2^53 a step of 1 no longer changes the double, which would
+        // loop forever. Real jq aborts on an assertion here instead.
+        if *next + step == *next {
+            return None;
+        }
+        let value = start.take().unwrap_or(Value::Float(*next));
         *next += step;
-        Some(Value::Float(value))
+        Some(value)
     } else {
         None
     }
@@ -580,9 +610,14 @@ impl NativeState {
                     Ok(NativeEvent::Done)
                 }
             }
-            Self::Range { next, end, step } => {
-                Ok(range_next(next, *end, *step).map_or(NativeEvent::Done, NativeEvent::Output))
-            }
+            Self::Range {
+                next,
+                end,
+                step,
+                start,
+            } => Ok(
+                range_next(next, *end, *step, start).map_or(NativeEvent::Done, NativeEvent::Output)
+            ),
         }
     }
 
@@ -599,7 +634,17 @@ impl NativeState {
                     "native stream already initialized".into(),
                 ));
             }
-            Self::Range { next, end, step } => {
+            Self::Range {
+                next,
+                end,
+                step,
+                start,
+            } => {
+                *start = Some(if args.len() == 1 {
+                    Value::int(0)
+                } else {
+                    args[0].clone()
+                });
                 *next = if args.len() == 1 {
                     0.0
                 } else {

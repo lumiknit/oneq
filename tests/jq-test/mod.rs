@@ -167,7 +167,7 @@ fn upstream_jq_test() {
             } else {
                 failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
             };
-            if done % 30 == 0 || done == total {
+            if done.is_multiple_of(30) || done == total {
                 eprintln!("jq.test: completed {done}/{total} (failed {fails})");
             }
             (!ok).then_some((n + 1, program))

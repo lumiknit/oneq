@@ -1,6 +1,7 @@
 //! Append is atomic; executions exclusively borrow the session and commit on EOF.
 use super::{InputMode, JqError, RunOutcome, Vm, VmEvent, code::Program, frame::Frame, host::Host};
 use crate::jq::{
+    builtins::{BUILTIN_JQ, COMPAT_JQ},
     compiler::{
         self, CompileError, CompileOptions,
         modules::{ModuleCache, ModuleGraph},
@@ -47,9 +48,6 @@ impl Default for Session {
         Self::new()
     }
 }
-/// The jq-language prelude (jq's own builtin.jq), loaded once into every fresh session.
-const BUILTIN_JQ: &str = include_str!("../builtins/builtin.jq");
-
 struct NoHost;
 impl Host for NoHost {
     fn next_input(&mut self) -> Option<Result<Value, JqError>> {
@@ -82,10 +80,7 @@ impl Session {
     /// its `Define` instruction actually runs, so the entry has to run to completion too.
     fn load_builtin(&mut self) -> Result<(), JqError> {
         let mut host = NoHost;
-        for (path, source) in [
-            ("<builtin.jq>", BUILTIN_JQ),
-            ("<compat.jq>", include_str!("../builtins/compat.jq")),
-        ] {
+        for (path, source) in [("<builtin.jq>", BUILTIN_JQ), ("<compat.jq>", COMPAT_JQ)] {
             let entry = self
                 .append(
                     source,

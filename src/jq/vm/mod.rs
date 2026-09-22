@@ -1,5 +1,6 @@
 mod builtin;
 pub mod code;
+mod containers;
 pub mod frame;
 pub mod host;
 pub mod session;
@@ -63,7 +64,7 @@ mod recovery_tests {
     #[test]
     fn iteration_keeps_only_one_pending_choice_and_skips_lost_paths() {
         let input = Value::Array(Rc::new(
-            (0..100_000).map(|i| Value::Float(i as f64)).collect(),
+            (0..100_000).map(|i| Value::Float(f64::from(i))).collect(),
         ));
         let mut vm = Vm::start(0, input, Frame::default());
         // Value-producing instructions can invalidate the current path.
@@ -296,10 +297,14 @@ impl Vm {
             if point.skip_if.as_ref().is_some_and(|flag| flag.get()) {
                 continue;
             }
-            if let Some(crate::jq::builtins::NativeState::Range { next, end, step }) =
-                &mut point.native
+            if let Some(crate::jq::builtins::NativeState::Range {
+                next,
+                end,
+                step,
+                start,
+            }) = &mut point.native
             {
-                let Some(value) = crate::jq::builtins::range_next(next, *end, *step) else {
+                let Some(value) = crate::jq::builtins::range_next(next, *end, *step, start) else {
                     continue;
                 };
                 // Restore without cloning the large continuation. Re-snapshot only after restore.
@@ -408,6 +413,32 @@ impl Vm {
                     .checked_sub(1)
                     .ok_or_else(|| JqError::InvalidCode("operand underflow".into()))?;
                 self.operands.truncate(remaining);
+            }
+            Instruction::ConstPath(steps) => {
+                for key in steps {
+                    // Materialize strings only for tracked paths and errors.
+                    if self.input.path.is_none() && self.path_depth > 0 {
+                        return Err(value::error(format!(
+                            "Invalid path expression near attempt to access element {} of {}",
+                            Value::String(crate::strs::resolve(*key).unwrap().to_owned().into())
+                                .to_compact_json(),
+                            self.input.value.to_compact_json()
+                        )));
+                    }
+                    if let Some(path) = &mut self.input.path {
+                        path.push(Value::String(
+                            crate::strs::resolve(*key).unwrap().to_owned().into(),
+                        ));
+                    }
+                    self.input.value = match &self.input.value {
+                        Value::Object(map) => map.get(key).cloned().unwrap_or(Value::Null),
+                        Value::Null => Value::Null,
+                        base => value::index(
+                            base,
+                            &Value::String(crate::strs::resolve(*key).unwrap().to_owned().into()),
+                        )?,
+                    };
+                }
             }
             Instruction::Index => {
                 let base = self
@@ -708,6 +739,29 @@ impl Vm {
                     .ok_or_else(|| JqError::InvalidCode("collect stack underflow".into()))?
                     .push(self.input.value.clone());
             }
+            Instruction::LastItem => {
+                let values = self
+                    .collect
+                    .last_mut()
+                    .ok_or_else(|| JqError::InvalidCode("last stack underflow".into()))?;
+                let value = std::mem::take(&mut self.input.value);
+                if let Some(last) = values.last_mut() {
+                    *last = value;
+                } else {
+                    values.push(value);
+                }
+            }
+            Instruction::EndLast => {
+                let mut values = self
+                    .collect
+                    .pop()
+                    .ok_or_else(|| JqError::InvalidCode("last stack underflow".into()))?;
+                if let Some(value) = values.pop() {
+                    self.input = value.into();
+                } else {
+                    self.backtrack();
+                }
+            }
             Instruction::EndCollect => {
                 let values = self
                     .collect
@@ -715,6 +769,8 @@ impl Vm {
                     .ok_or_else(|| JqError::InvalidCode("collect stack underflow".into()))?;
                 self.input = Value::Array(Rc::new(values)).into();
             }
+            Instruction::MakeContainer(plan) => self.build_container(plan, false)?,
+            Instruction::ExtendContainer(plan) => self.build_container(plan, true)?,
             Instruction::MakeObject(pairs) => {
                 if self.operands.len() < pairs * 2 + 1 {
                     return Err(JqError::InvalidCode("missing object fields".into()));
@@ -729,7 +785,12 @@ impl Vm {
                     let [key, value] = chunk else { unreachable!() };
                     let Value::String(key) = &key.value else {
                         return Err(JqError::Runtime(Value::String(
-                            "Object keys must be strings".to_string().into(),
+                            format!(
+                                "Cannot use {} ({}) as object key",
+                                key.value.type_name(),
+                                crate::jq::vm::value::truncated_repr(&key.value)
+                            )
+                            .into(),
                         )));
                     };
                     map.insert(strs::intern(key), value.value.clone());

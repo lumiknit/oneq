@@ -45,7 +45,10 @@ pub fn length(input: &Value, _: &[Value]) -> Result<Value, JqError> {
             )));
         }
     };
-    Ok(Value::int(length as i64))
+    // A counted length is a plain double in jq, unlike the `abs` of a number
+    // literal above which keeps its exact decimal value. Only the double
+    // carries IEEE's signed zero, so `[] | length | -.` is `-0`.
+    Ok(Value::Float(length as f64))
 }
 
 use crate::{jq::vm::value::error, strs};
@@ -215,8 +218,11 @@ pub fn divide(_: &Value, args: &[Value]) -> Result<Value, JqError> {
                 .collect()
         })));
     }
-    let dividend = number(&args[0])?;
-    let divisor = number(&args[1])?;
+    // `number()` would report the one bad operand ("array ([1]) number
+    // required"); jq names both for an operator, so check the pair first.
+    let (Some(dividend), Some(divisor)) = (args[0].as_number(), args[1].as_number()) else {
+        return Err(arith_type_error("divided", &args[0], &args[1]));
+    };
     if divisor == 0.0 {
         return Err(error(format!(
             "{} ({}) and {} ({}) cannot be divided because the divisor is zero",
@@ -238,7 +244,9 @@ fn remainder_by_zero_error(a: &Value, b: &Value) -> JqError {
     ))
 }
 pub fn modulo(_: &Value, args: &[Value]) -> Result<Value, JqError> {
-    let (a_f, b_f) = (number(&args[0])?, number(&args[1])?);
+    let (Some(a_f), Some(b_f)) = (args[0].as_number(), args[1].as_number()) else {
+        return Err(arith_type_error("divided (remainder)", &args[0], &args[1]));
+    };
     if a_f.is_nan() || b_f.is_nan() {
         return Ok(Value::Float(f64::NAN));
     }
@@ -373,8 +381,8 @@ pub fn builtins(_: &Value, _: &[Value]) -> Result<Value, JqError> {
             .map(|spec| format!("{}/{}", spec.name, spec.params.len()))
             .collect();
         for (path, source) in [
-            ("<builtin.jq>", include_str!("builtin.jq")),
-            ("<compat.jq>", include_str!("compat.jq")),
+            ("<builtin.jq>", super::BUILTIN_JQ),
+            ("<compat.jq>", super::COMPAT_JQ),
         ] {
             let (files, root) = crate::jq::parser::parse_pairs(path, source)
                 .expect("embedded jq library must parse");

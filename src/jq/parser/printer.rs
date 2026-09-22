@@ -531,7 +531,7 @@ impl<'a> Printer<'a> {
                 let mut xs = Children::new(p);
                 self.out.push('[');
                 let from = xs.next(self).unwrap();
-                if from.tag != T::Int || self.content(from) != "0" {
+                if from.tag != T::Invoke || self.content(from) != "null" {
                     self.p(from);
                 }
                 self.out.push(':');

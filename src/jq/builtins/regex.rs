@@ -19,6 +19,18 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+/// The subject of a match reports its own type, unlike the generic
+/// `string()` used for the pattern and the flags.
+fn subject(value: &Value) -> Result<&str, JqError> {
+    match value {
+        Value::String(s) => Ok(s),
+        _ => Err(error(format!(
+            "{} ({}) cannot be matched, as it is not a string",
+            value.type_name(),
+            crate::jq::vm::value::truncated_repr(value)
+        ))),
+    }
+}
 fn compile(args: &[Value]) -> Result<(Rc<::regex::Regex>, bool, bool), JqError> {
     let pattern = string(&args[0])?;
     let flags = match args.get(1) {
@@ -76,7 +88,7 @@ fn record(text: &str, found: Option<::regex::Match<'_>>, name: Option<&str>) -> 
     object(fields)
 }
 fn matches(input: &Value, args: &[Value], capture_only: bool) -> Result<Vec<Value>, JqError> {
-    let text = string(input)?;
+    let text = subject(input)?;
     let (regex, global, no_empty) = compile(args)?;
     let names: Vec<_> = regex.capture_names().collect();
     let mut result = Vec::new();
@@ -134,7 +146,7 @@ fn matches(input: &Value, args: &[Value], capture_only: bool) -> Result<Vec<Valu
 pub fn match_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let testmode = matches!(args.get(2), Some(Value::Bool(true)));
     if testmode {
-        let text = string(input)?;
+        let text = subject(input)?;
         let (regex, _, no_empty) = compile(&args[..2])?;
         Ok(Value::Bool(if no_empty {
             regex.find_iter(text).any(|m| !m.is_empty())

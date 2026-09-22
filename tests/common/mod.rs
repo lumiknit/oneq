@@ -55,9 +55,7 @@ pub fn fmt(mode: &str, stdin: &[u8]) -> Vec<u8> {
 /// and `stdin`.
 pub fn run_jq(args: &[&str], stdin: &[u8]) -> Output {
     let local = Path::new(env!("CARGO_MANIFEST_DIR")).join(".manual/jq.exe");
-    let program = std::env::var_os("JQ")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| if local.is_file() { local } else { "jq".into() });
+    let program = std::env::var_os("JQ").map_or_else(|| if local.is_file() { local } else { "jq".into() }, PathBuf::from);
     // Native Windows jq otherwise translates output newlines to CRLF.
     let mut flags = Vec::new();
     if cfg!(windows) {

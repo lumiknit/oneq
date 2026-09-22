@@ -60,7 +60,7 @@ macro_rules! dispatch {
                         state.initialize(&input, args)?;
                         self.advance_native(state)?;
                     }
-                    BuiltinInstr::Path => {
+                    BuiltinInstr::Path | BuiltinInstr::Last => {
                         return Err(JqError::InvalidCode("uncompiled path filter".into()));
                     }
                     BuiltinInstr::Empty => {

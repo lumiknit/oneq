@@ -1,3 +1,6 @@
+. as $t |
+range(10000) |
+$t |
 [
   (.orders
    | map(select(.customer.account.active)

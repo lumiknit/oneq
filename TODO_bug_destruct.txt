@@ -1,0 +1,82 @@
+# `?//` destructuring alternative can be re-entered by downstream errors/backtracking
+
+In jq 1.8.2, a successful `?//` destructuring alternative can remain reachable through the VM backtracking stack. A later error or backtracking operation may re-enter the fallback alternative even though the first alternative already matched successfully.
+
+## Minimal example
+
+```sh
+echo '[[]]' | jq -c '(. as [$a] ?// {$a} | $a) | ., (1/0)'
+```
+
+Expected behavior:
+
+1. `[$a]` successfully matches `[[]]`, binding `$a` to `[]`.
+2. `$a` produces `[]`.
+3. The first branch of `., (1/0)` produces `[]`.
+4. The second branch evaluates `1/0` and fails with a division-by-zero error.
+
+Therefore, the error should come from `1/0`.
+
+Actual behavior with jq 1.8.2:
+
+```text
+jq: error: Cannot index array with string "a"
+[]
+```
+
+The downstream `1/0` error appears to cause jq to backtrack into the already-successful `?//` expression and try the second destructuring alternative, `{$a}`. That alternative then fails because the input is an array, replacing the original downstream error.
+
+A related case can be observed with `first`, whose stdlib definition uses `label`/`break`:
+
+```jq
+def first(g): label $out | g | ., break $out;
+```
+
+For example, behavior differs depending on whether ordinary comma backtracking or the `label`/`break` structure is involved.
+
+## Suspected cause
+
+jq compiles `?//` using the `DESTRUCTURE_ALT` opcode.
+
+`DESTRUCTURE_ALT`, like `FORK` and `TRY_BEGIN`, saves a continuation using the VM's general backtracking stack (`stack_save`). When the first destructuring alternative succeeds, this saved fallback remains reachable.
+
+If a later expression produces an error, jq enters its normal backtracking machinery. The VM may eventually restore the earlier `DESTRUCTURE_ALT` continuation, causing the second destructuring alternative to execute even though the first alternative had already succeeded.
+
+This is particularly notable because ordinary `try/catch` appears to explicitly protect against the same class of problem. `TRY_END` wraps downstream errors so that the corresponding `TRY_BEGIN` does not accidentally catch errors originating after the protected expression has already succeeded.
+
+`DESTRUCTURE_ALT` does not appear to have an equivalent boundary mechanism.
+
+Conceptually, the problematic execution looks like:
+
+```text
+DESTRUCTURE_ALT
+    |
+    +-- alternative 1 succeeds
+    |       |
+    |       +-- downstream expression executes
+    |               |
+    |               +-- downstream error
+    |                       |
+    |                       +-- VM backtracks
+    |                               |
+    |                               +-- restores old DESTRUCTURE_ALT
+    |
+    +-- alternative 2 is executed unexpectedly
+```
+
+The result is that an error originating after a successful `?//` expression can be interpreted as failure of the destructuring alternative itself.
+
+## Expected semantics
+
+Once a `?//` alternative has successfully matched and execution has proceeded beyond that destructuring expression, errors originating in downstream expressions should not cause jq to retry another destructuring alternative.
+
+For the example:
+
+```jq
+(. as [$a] ?// {$a} | $a) | ., (1/0)
+```
+
+the final error should therefore be the error produced by `1/0`, rather than an error produced by retrying `{$a}`.
+
+Tested with jq 1.8.2.
+

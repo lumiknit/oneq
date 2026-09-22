@@ -11,6 +11,21 @@ pub struct CodeId {
     pub(crate) offset: usize,
 }
 
+/// Constants live in code; dynamic fields are evaluated in source order and
+/// pushed on the operand stack before constructing or extending a container.
+#[derive(Clone, Debug)]
+pub enum BuildValue {
+    Constant(Value),
+    Dynamic,
+}
+
+#[derive(Clone, Debug)]
+pub enum ContainerPlan {
+    Array(Vec<BuildValue>),
+    /// Keys are interned and unique, in insertion order.
+    Object(Vec<(crate::strs::Symbol, BuildValue)>),
+}
+
 #[derive(Clone, Debug)]
 pub enum Instruction {
     Load(Value),
@@ -19,6 +34,7 @@ pub enum Instruction {
     Pop,
     Drop,
     Index,
+    ConstPath(Vec<crate::strs::Symbol>),
     BeginPath,
     EndPath,
     Iterate,
@@ -77,6 +93,9 @@ pub enum Instruction {
     /// Appends the current input to the innermost accumulator. Callers must
     /// follow with an explicit Backtrack to search for further items.
     CollectItem,
+    /// Uses a collection region with capacity for just one retained output.
+    LastItem,
+    EndLast,
     /// Placed at a `BeginCollect`'s `end`: pops the accumulator into an array
     /// and continues with it as input. The backtrack that reaches this point
     /// already restored the pre-collection input/frame/operands.
@@ -84,6 +103,8 @@ pub enum Instruction {
     /// Pops `2 * n` values (key, value pairs, in source order) plus the
     /// original input, and continues with the built object as input.
     MakeObject(usize),
+    MakeContainer(ContainerPlan),
+    ExtendContainer(ContainerPlan),
     Yield,
     Backtrack,
 }

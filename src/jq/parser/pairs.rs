@@ -105,9 +105,11 @@ pub enum PairTag {
 
     /// Slice[FROM: Expr, TO?: Expr]; only a Path component.
     /// An omitted right bound removes its child. An omitted left bound inserts
-    /// synthetic Int(0): [:3] => Slice[Int(0), Int(3)], [4:] => Slice[Int(4)].
+    /// a synthetic `null`: [:3] => Slice[Invoke("null"), Int(3)], [4:] =>
+    /// Slice[Int(4)]. `null` is what jq itself substitutes, so [:3] and
+    /// [null:3] canonicalize together - but *not* [0:3], which jq reports
+    /// differently when the base is unsliceable ("start":0 vs "start":null).
     /// Bounds may be variables or arbitrary expressions, including unary minus.
-    /// This deliberately canonicalizes [:3] and [0:3] to the same structure.
     Slice,
 
     /// Spread[]; only a Path component, for iteration with '.[]'.
@@ -590,7 +592,7 @@ impl Pair {
             }
             Rule::slice => {
                 if !rules.contains(&Rule::slice_from) {
-                    xs.insert(0, Self::new(T::Int, "0", vec![]));
+                    xs.insert(0, Self::new(T::Invoke, "null", vec![]));
                 }
                 Self::node(T::Slice, xs)
             }

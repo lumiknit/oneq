@@ -2,7 +2,7 @@
 // compares jq and 1q on the same pair. It is intentionally self-contained so
 // it can be run without changing the Rust crate or adding Go dependencies:
 //
-//   go run ./utils/fuzzer/main.go -oneq ./target/release/1q
+//	go run ./utils/fuzzer/main.go -oneq ./target/release/1q
 //
 // A mismatch is appended to fuzz.err.txt by default. The generated programs
 // are not intended to be pretty; keeping them small makes a counterexample
@@ -24,11 +24,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type result struct {
-	exit    int
+	exit   int
 	stdout []byte
 	stderr bool
 	err    string
@@ -47,10 +48,14 @@ func main() {
 	timeout := flag.Duration("timeout", 2*time.Second, "maximum time for either tool per case")
 	interval := flag.Duration("interval", 5*time.Second, "progress print interval")
 	errPath := flag.String("errors", "fuzz.err.txt", "counterexample log")
+	workers := flag.Int("workers", defaultWorkers(), "number of cases to run in parallel")
 	flag.Parse()
 
 	if *iterations < 0 {
 		fatal("-iterations must be non-negative")
+	}
+	if *workers < 1 {
+		fatal("-workers must be positive")
 	}
 	*jqPath = executable(*jqPath)
 	*oneqPath = executable(*oneqPath)
@@ -60,33 +65,65 @@ func main() {
 	}
 	defer log.Close()
 
-	rng := rand.New(rand.NewSource(*seed))
 	started := time.Now()
-	lastReport := started
-	passed, failed := 0, 0
-	failures := 0
-	fmt.Printf("fuzzer seed=%d jq=%s 1q=%s\n", *seed, *jqPath, *oneqPath)
+	var issued, passed, failed int64
+	var logMu sync.Mutex
+	fmt.Printf("fuzzer seed=%d workers=%d jq=%s 1q=%s\n", *seed, *workers, *jqPath, *oneqPath)
 
-	for i := 0; *iterations == 0 || i < *iterations; i++ {
-		caseData := generate(rng)
-		jqResult, oneqResult := compare(caseData, *jqPath, *oneqPath, *timeout)
-		if same(jqResult, oneqResult) {
-			passed++
-		} else {
-			failed++
-			failures++
-			if err := writeFailure(log, i+1, *seed, caseData, jqResult, oneqResult); err != nil {
-				fatal("write counterexample: %v", err)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	for w := 0; w < *workers; w++ {
+		wg.Go(func() {
+			for {
+				n := atomic.AddInt64(&issued, 1)
+				if *iterations != 0 && n > int64(*iterations) {
+					return
+				}
+				// Deriving the rng from the case number keeps a case
+				// reproducible no matter how many workers ran it.
+				rng := rand.New(rand.NewSource(int64(uint64(*seed) + uint64(n)*0x9e3779b97f4a7c15)))
+				caseData := generate(rng)
+				jqResult, oneqResult := compare(caseData, *jqPath, *oneqPath, *timeout)
+				if same(jqResult, oneqResult) {
+					atomic.AddInt64(&passed, 1)
+					continue
+				}
+				atomic.AddInt64(&failed, 1)
+				logMu.Lock()
+				err := writeFailure(log, int(n), *seed, caseData, jqResult, oneqResult)
+				logMu.Unlock()
+				if err != nil {
+					fatal("write counterexample: %v", err)
+				}
+			}
+		})
+	}
+
+	go func() {
+		ticker := time.NewTicker(*interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case now := <-ticker.C:
+				p, f := atomic.LoadInt64(&passed), atomic.LoadInt64(&failed)
+				fmt.Printf("%s cases=%d passed=%d failed=%d rate=%.1f/s\n", now.Format(time.RFC3339), p+f, p, f, float64(p+f)/now.Sub(started).Seconds())
 			}
 		}
+	}()
 
-		now := time.Now()
-		if now.Sub(lastReport) >= *interval {
-			fmt.Printf("%s cases=%d passed=%d failed=%d rate=%.1f/s\n", now.Format(time.RFC3339), passed+failed, passed, failed, float64(passed+failed)/now.Sub(started).Seconds())
-			lastReport = now
-		}
+	wg.Wait()
+	close(done)
+	p, f := atomic.LoadInt64(&passed), atomic.LoadInt64(&failed)
+	fmt.Printf("done cases=%d passed=%d failed=%d counterexamples=%d\n", p+f, p, f, f)
+}
+
+func defaultWorkers() int {
+	if n := runtime.NumCPU(); n < 8 {
+		return n
 	}
-	fmt.Printf("done cases=%d passed=%d failed=%d counterexamples=%d\n", passed+failed, passed, failed, failures)
+	return 8
 }
 
 func executable(path string) string {
@@ -141,8 +178,18 @@ func commandError(err error) string {
 }
 
 func same(a, b result) bool {
-	return a.exit == b.exit && bytes.Equal(a.stdout, b.stdout) && a.stderr == b.stderr
+	// Rejecting the program at compile time (exit 3) instead of failing on it
+	// at run time (exit 5) is not a difference worth reporting: both refuse
+	// the same program, and constant folding decides which one happens. The
+	// tool that compiled may also have printed output before failing, so the
+	// comparison has to stop at the exit code here.
+	if a.exit != b.exit {
+		return rejected(a.exit) && rejected(b.exit)
+	}
+	return bytes.Equal(a.stdout, b.stdout) && a.stderr == b.stderr
 }
+
+func rejected(exit int) bool { return exit == 3 || exit == 5 }
 
 func writeFailure(log *os.File, n int, seed int64, s sample, jq, oneq result) error {
 	var b strings.Builder
@@ -182,7 +229,7 @@ func expr(r *rand.Rand, d int) string {
 		return leaf(r)
 	}
 	child := func() string { return expr(r, d-1) }
-	switch r.Intn(36) {
+	switch r.Intn(60) {
 	case 0:
 		return ". | " + child()
 	case 1:
@@ -190,7 +237,7 @@ func expr(r *rand.Rand, d int) string {
 	case 2:
 		return "[" + child() + "]"
 	case 3:
-		return "{" + key(r) + ": " + child() + ", x: " + child() + "}"
+		return "{" + key(r) + ": (" + child() + "), x: (" + child() + ")}"
 	case 4:
 		return "try (" + child() + ") catch (" + child() + ")"
 	case 5:
@@ -254,6 +301,54 @@ func expr(r *rand.Rand, d int) string {
 		return "(" + child() + ") | (select(. != null) // null)"
 	case 34:
 		return "[" + child() + "] | {items: ., count: length}"
+	case 35:
+		return "(" + child() + ") " + arithOp(r) + " (" + child() + ")"
+	case 36:
+		return "(" + child() + ") " + compareOp(r) + " (" + child() + ")"
+	case 37:
+		return "(" + child() + ") " + boolOp(r) + " (" + child() + ")"
+	case 38:
+		return "(" + child() + ") | not"
+	case 39:
+		return "-(" + child() + ")"
+	case 40:
+		return "\"v=\\(" + child() + ")\""
+	case 41:
+		return format(r) + " \"v=\\(" + child() + ")\""
+	case 42:
+		return "(" + child() + ") | " + format(r)
+	case 43:
+		return "(" + child() + ") | " + slice(r)
+	case 44:
+		return "(" + sliceTarget(r) + ") = (" + child() + ")"
+	case 45:
+		return "(" + child() + ") | " + regexCall(r)
+	case 46:
+		return funcDef(r, child)
+	case 47:
+		return "(" + updateTarget(r) + ") " + assignOp(r) + " (" + child() + ")"
+	case 48:
+		return reduceExpr(r, child)
+	case 49:
+		return foreachExpr(r, child)
+	case 50:
+		return patternExpr(r, child)
+	case 51:
+		return objectExpr(r, child)
+	case 52:
+		return streamExpr(r, child)
+	case 53:
+		return "(" + child() + ") | " + byBuiltin(r) + "((" + child() + "))"
+	case 54:
+		return loopExpr(r, child)
+	case 55:
+		return "(" + child() + ") | " + predicate(r, child)
+	case 56:
+		return errorExpr(r, child)
+	case 57:
+		return "(" + child() + ")?"
+	case 58:
+		return "(def f: def g: (" + child() + "); [g, g]; f)"
 	default:
 		return "[" + child() + "] | add"
 	}
@@ -264,8 +359,198 @@ func updateTarget(r *rand.Rand) string {
 	return choices[r.Intn(len(choices))]
 }
 
+func reduceExpr(r *rand.Rand, child func() string) string {
+	switch r.Intn(4) {
+	case 0:
+		return "reduce (" + child() + ") as $i ([]; . + [$i])"
+	case 1:
+		return "reduce (" + child() + ") as $i ((" + child() + "); (" + child() + "))"
+	case 2:
+		return "reduce (" + child() + ") as [$a, $b] ([]; . + [$a, $b])"
+	default:
+		return "reduce (" + child() + ") as {$a} ([]; . + [$a])"
+	}
+}
+
+func foreachExpr(r *rand.Rand, child func() string) string {
+	switch r.Intn(3) {
+	case 0:
+		return "[foreach (" + child() + ") as $i ([]; . + [$i]; length)]"
+	case 1:
+		return "[foreach (" + child() + ") as $i ((" + child() + "); (" + child() + "); (" + child() + "))]"
+	default:
+		return "[foreach (" + child() + ") as [$a] ([]; . + [$a])]"
+	}
+}
+
+// `?//` needs jq 1.7 or newer; the alternatives are tried left to right and
+// every variable in the union is bound (to null) in each branch.
+func patternExpr(r *rand.Rand, child func() string) string {
+	switch r.Intn(4) {
+	case 0:
+		return "(. as [$a] ?// {$a} | [$a, (" + child() + ")])"
+	case 1:
+		return "(. as [$a, $b] | [$a, $b])"
+	case 2:
+		return "(. as {a: $x, b: [$y]} | [$x, $y])"
+	default:
+		return "((" + child() + ") as [$a] ?// $a | [$a])"
+	}
+}
+
+func objectExpr(r *rand.Rand, child func() string) string {
+	switch r.Intn(5) {
+	case 0:
+		return "(. as $x | {$x})"
+	case 1:
+		return "{(" + child() + "): (" + child() + ")}"
+	case 2:
+		return "{\"k\\(" + child() + ")\": (" + child() + ")}"
+	case 3:
+		return "{a, b}"
+	default:
+		return "({" + key(r) + ": (" + child() + ")} + {x: 1})"
+	}
+}
+
+func streamExpr(r *rand.Rand, child func() string) string {
+	switch r.Intn(6) {
+	case 0:
+		return "[(" + child() + ") | tostream]"
+	case 1:
+		return "fromstream((" + child() + ") | tostream)"
+	case 2:
+		return "[(" + child() + ") | paths]"
+	case 3:
+		return "[1 | truncate_stream((" + child() + ") | tostream)]"
+	case 4:
+		return "(" + child() + ") | getpath([\"a\", 0])"
+	default:
+		return "(" + child() + ") | with_entries(.value = (" + child() + "))"
+	}
+}
+
+func byBuiltin(r *rand.Rand) string {
+	choices := []string{"sort_by", "group_by", "unique_by", "min_by", "max_by", "map"}
+	return choices[r.Intn(len(choices))]
+}
+
+func loopExpr(r *rand.Rand, child func() string) string {
+	// Every loop is bounded: `limit` caps the unbounded generators, and the
+	// `until` condition shrinks its input by one element per step.
+	switch r.Intn(5) {
+	case 0:
+		return "[limit(3; repeat((" + child() + ")))]"
+	case 1:
+		return "[limit(3; while(true; (" + child() + ")))]"
+	case 2:
+		return "([" + child() + "] | until(length == 0; .[1:]))"
+	case 3:
+		return "isempty((" + child() + "))"
+	default:
+		return "walk(if type == \"array\" then sort else (" + child() + ") end)"
+	}
+}
+
+func predicate(r *rand.Rand, child func() string) string {
+	switch r.Intn(7) {
+	case 0:
+		return "any(.[]?; (" + child() + ") != null)"
+	case 1:
+		return "all(.[]?; (" + child() + ") != null)"
+	case 2:
+		return "has(\"a\")"
+	case 3:
+		return "contains((" + child() + "))"
+	case 4:
+		return "inside((" + child() + "))"
+	case 5:
+		return "IN((" + child() + "))"
+	default:
+		return "index((" + child() + "))"
+	}
+}
+
+func errorExpr(r *rand.Rand, child func() string) string {
+	switch r.Intn(4) {
+	case 0:
+		return "try (error((" + child() + "))) catch ."
+	case 1:
+		return "try ((" + child() + ") | error) catch ."
+	case 2:
+		return "((" + child() + ") | tostring | @base64 | @base64d)"
+	default:
+		return "(label $a | (label $b | (" + child() + "), break $b), break $a)"
+	}
+}
+
+func arithOp(r *rand.Rand) string {
+	choices := []string{"+", "-", "*", "/", "%"}
+	return choices[r.Intn(len(choices))]
+}
+
+func compareOp(r *rand.Rand) string {
+	choices := []string{"==", "!=", "<", "<=", ">", ">="}
+	return choices[r.Intn(len(choices))]
+}
+
+func boolOp(r *rand.Rand) string {
+	if r.Intn(2) == 0 {
+		return "and"
+	}
+	return "or"
+}
+
+func assignOp(r *rand.Rand) string {
+	choices := []string{"|=", "=", "+=", "-=", "*=", "/=", "%=", "//="}
+	return choices[r.Intn(len(choices))]
+}
+
+func format(r *rand.Rand) string {
+	choices := []string{"@text", "@json", "@csv", "@tsv", "@html", "@uri", "@sh", "@base64"}
+	return choices[r.Intn(len(choices))]
+}
+
+func slice(r *rand.Rand) string {
+	choices := []string{".[1:3]", ".[:2]", ".[1:]", ".[-2:]", ".[0:0]", ".[2:1]"}
+	return choices[r.Intn(len(choices))]
+}
+
+func sliceTarget(r *rand.Rand) string {
+	choices := []string{".[1:2]", ".[:1]", ".[1:]", ".a[0:1]"}
+	return choices[r.Intn(len(choices))]
+}
+
+// Patterns stay simple on purpose: jq uses Oniguruma, so exotic syntax would
+// report engine differences instead of jq/1q differences.
+func regexCall(r *rand.Rand) string {
+	choices := []string{
+		"test(\"a\")", "test(\"[ab]+\"; \"i\")", "match(\"a\")",
+		"[match(\"a\"; \"g\") | .offset]", "capture(\"(?<x>a)\")",
+		"[scan(\"a\")]", "split(\"a\"; null)", "split(\"[,;]\"; \"g\")",
+		"sub(\"a\"; \"X\")", "gsub(\"a\"; \"X\"; \"g\")", "[splits(\"a\")]",
+	}
+	return choices[r.Intn(len(choices))]
+}
+
+// The def is parenthesized so it can appear anywhere a term can; otherwise its
+// body would swallow the rest of the surrounding pipeline.
+func funcDef(r *rand.Rand, child func() string) string {
+	switch r.Intn(4) {
+	case 0:
+		return "(def f: (" + child() + "); f)"
+	case 1:
+		return "(def f(g): [g, g]; f(" + child() + "))"
+	case 2:
+		return "(def f($x): [$x, (" + child() + ")]; f(1))"
+	default:
+		// Terminates because every recursive call strips one array level.
+		return "(def f: if type == \"array\" then map(f) else (" + child() + ") end; f)"
+	}
+}
+
 func leaf(r *rand.Rand) string {
-	choices := []string{".", ".[]?", ".a", ".a[]?", "empty", "null", "true", "false", "1", "-2", "\"a\"", "\"a,b\"", "[1, 2, 3]", "{a: 1, b: \"x\"}"}
+	choices := []string{".", ".[]?", ".a", ".a[]?", "empty", "null", "true", "false", "1", "-2", "0.5", "1e3", "1e1000", "-0", "9007199254740993", "\"a\"", "\"a,b\"", "[1, 2, 3]", "{a: 1, b: \"x\"}"}
 	return choices[r.Intn(len(choices))]
 }
 
@@ -276,6 +561,11 @@ func builtin(r *rand.Rand) string {
 		"ascii_downcase", "ascii_upcase", "explode", "split(\",\")", "join(\"-\")",
 		"startswith(\"a\")", "endswith(\"z\")", "ltrimstr(\"a\")", "rtrimstr(\"z\")",
 		"to_entries", "from_entries", "min", "max", "todateiso8601",
+		"add", "reverse", "not", "tojson", "implode", "transpose", "infinite",
+		"exp", "log", "log2", "log10", "exp2", "exp10", "cbrt", "trunc",
+		"nearbyint", "significand", "logb", "lgamma", "tgamma",
+		"gmtime", "mktime", "todate", "fromdate", "strftime(\"%Y-%m\")",
+		"toboolean", "ascii_downcase", "getpath([])", "paths",
 	}
 	return choices[r.Intn(len(choices))]
 }
