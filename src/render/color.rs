@@ -65,25 +65,25 @@ pub struct TextStyle(String);
 
 impl Default for TextStyle {
     fn default() -> Self {
-        TextStyle("0;39".to_string())
+        Self("0;39".to_string())
     }
 }
 
 impl TryFrom<&str> for TextStyle {
     type Error = String;
 
-    /// Validate the input string and create a TextStyle instance.
+    /// Validate the input string and create a `TextStyle` instance.
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         // Split the input string by semicolons and parse each part as a u8.
         for part in s.split(';') {
             if part.parse::<u8>().is_err() {
-                return Err(format!("Invalid ANSI code: {}", part));
+                return Err(format!("Invalid ANSI code: {part}"));
             }
         }
         let mut t = String::with_capacity(2 + s.len());
         t.push_str("0;");
         t.push_str(s);
-        Ok(TextStyle(t))
+        Ok(Self(t))
     }
 }
 

@@ -30,10 +30,11 @@ pub struct Decimal {
 }
 
 impl Decimal {
+    #[must_use]
     pub fn from_i64(n: i64) -> Self {
         let sign = if n < 0 { -1 } else { 1 };
         let s = n.unsigned_abs().to_string();
-        Decimal {
+        Self {
             sign,
             digits: s.bytes().map(|b| b - b'0').collect(),
             exponent: 0,
@@ -44,7 +45,7 @@ impl Decimal {
     /// digits, an optional `.` fraction, and an optional `[eE][+-]?digits`
     /// exponent. Returns `None` for anything else (callers only feed this
     /// already-tokenized number text, so a mismatch means a caller bug).
-    pub fn parse(text: &str) -> Option<Decimal> {
+    pub fn parse(text: &str) -> Option<Self> {
         let bytes = text.as_bytes();
         let mut i = 0;
         let sign = match bytes.first() {
@@ -111,28 +112,31 @@ impl Decimal {
             stripped.bytes().map(|b| b - b'0').collect()
         };
         let exponent = exp - frac_part.len() as isize;
-        Some(Decimal {
+        Some(Self {
             sign,
             digits,
             exponent,
         })
     }
 
+    #[must_use]
     pub fn is_zero(&self) -> bool {
         self.digits.iter().all(|&d| d == 0)
     }
 
     /// Exact negation - preserves precision, unlike arithmetic (matches
     /// real jq: "Unary negation preserves numerical precision").
-    pub fn negate(&self) -> Decimal {
-        Decimal {
+    #[must_use]
+    pub fn negate(&self) -> Self {
+        Self {
             sign: -self.sign,
             ..self.clone()
         }
     }
 
-    pub fn abs(&self) -> Decimal {
-        Decimal {
+    #[must_use]
+    pub fn abs(&self) -> Self {
+        Self {
             sign: 1,
             ..self.clone()
         }
@@ -141,6 +145,7 @@ impl Decimal {
     /// Lossy conversion for arithmetic - builds a plain scientific-notation
     /// string and lets Rust's own (correctly-rounded) float parser do the
     /// decimal-to-binary conversion, rather than reimplementing it.
+    #[must_use]
     pub fn to_f64(&self) -> f64 {
         // Up to 19 integer digits fit in u64. One integer-to-float conversion
         // rounds exactly as the parser does, without allocating two strings
@@ -149,7 +154,7 @@ impl Decimal {
             let integer = self
                 .digits
                 .iter()
-                .fold(0u64, |n, &digit| n * 10 + digit as u64);
+                .fold(0u64, |n, &digit| n * 10 + u64::from(digit));
             let number = integer as f64;
             return if self.sign < 0 { -number } else { number };
         }
@@ -168,7 +173,8 @@ impl Decimal {
     /// Exact value comparison (never rounds through `f64`) - needed so
     /// e.g. `13911860366432393 == 13911860366432392` stays `false` even
     /// though both literals round to the same nearest double.
-    pub fn compare(&self, other: &Decimal) -> Ordering {
+    #[must_use]
+    pub fn compare(&self, other: &Self) -> Ordering {
         let (a_zero, b_zero) = (self.is_zero(), other.is_zero());
         match (a_zero, b_zero) {
             (true, true) => return Ordering::Equal,
@@ -204,7 +210,7 @@ impl Decimal {
     /// trailing zeros) and comparing digit-by-digit - this way, differing
     /// numbers of "significant" trailing zeros (`1.50` vs `1.5`) never
     /// affect the *value* comparison, only formatting does.
-    fn compare_magnitude(a: &Decimal, b: &Decimal) -> Ordering {
+    fn compare_magnitude(a: &Self, b: &Self) -> Ordering {
         let min_exp = a.exponent.min(b.exponent);
         let a_len = a.digits.len() as isize + (a.exponent - min_exp);
         let b_len = b.digits.len() as isize + (b.exponent - min_exp);
@@ -229,6 +235,7 @@ impl Decimal {
     /// across the boundary in both directions for several shapes
     /// (`1e2` -> `1E+2`, `100` -> `100`, `0.000001` -> `0.000001`,
     /// `1e-7` -> `1E-7`, `1.000E+1000` round-trips unchanged).
+    #[must_use]
     pub fn to_canonical_string(&self) -> String {
         let digits = &self.digits;
         let adjusted = self.exponent + digits.len() as isize - 1;
@@ -292,7 +299,7 @@ impl PartialEq for Decimal {
 impl Eq for Decimal {}
 impl PartialOrd for Decimal {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.compare(other))
+        Some(std::cmp::Ord::cmp(self, other))
     }
 }
 impl Ord for Decimal {

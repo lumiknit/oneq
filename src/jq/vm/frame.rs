@@ -43,7 +43,7 @@ pub struct Frame {
     /// First bytecode slot owned by this binding region.
     pub base: usize,
     pub slots: Vec<Option<SlotValue>>,
-    pub parent: Option<Rc<Frame>>,
+    pub parent: Option<Rc<Self>>,
 }
 impl Frame {
     pub fn get(&self, mut slot: usize) -> Option<&SlotValue> {
@@ -66,10 +66,12 @@ impl Frame {
             }
         }
     }
+    #[must_use]
     pub fn empty_slots(len: usize) -> Vec<Option<SlotValue>> {
         std::iter::repeat_with(|| None).take(len).collect()
     }
-    pub fn bind(parent: Rc<Frame>, slot: usize, value: SlotValue) -> Rc<Frame> {
+    #[must_use]
+    pub fn bind(parent: Rc<Self>, slot: usize, value: SlotValue) -> Rc<Self> {
         Rc::new(Self {
             base: slot,
             slots: vec![Some(value)],

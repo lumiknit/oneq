@@ -63,6 +63,7 @@ pub struct TomlParser<'a> {
 }
 
 impl<'a> TomlParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>) -> Self {
         let filename = input.filename().to_owned();
         let root: NodeRef = Rc::new(RefCell::new(TomlNode::default()));
@@ -124,7 +125,7 @@ impl<'a> TomlParser<'a> {
     }
 
     fn skip_inline_ws(&mut self) {
-        while matches!(self.peek(), Some(' ') | Some('\t')) {
+        while matches!(self.peek(), Some(' ' | '\t')) {
             self.bump();
         }
     }
@@ -132,7 +133,7 @@ impl<'a> TomlParser<'a> {
     fn skip_ws_nl_comments(&mut self) {
         loop {
             match self.peek() {
-                Some(' ') | Some('\t') | Some('\r') | Some('\n') => {
+                Some(' ' | '\t' | '\r' | '\n') => {
                     self.bump();
                 }
                 Some('#') => {
@@ -308,10 +309,7 @@ impl<'a> TomlParser<'a> {
                             );
                         }
                         Some(c) if multiline && matches!(c, ' ' | '\t' | '\n' | '\r') => {
-                            while matches!(
-                                self.peek(),
-                                Some(' ') | Some('\t') | Some('\n') | Some('\r')
-                            ) {
+                            while matches!(self.peek(), Some(' ' | '\t' | '\n' | '\r')) {
                                 self.bump();
                             }
                         }
@@ -625,49 +623,37 @@ impl<'a> TomlParser<'a> {
             common += 1;
         }
         while self.open_path.len() > common {
-            let frame_path = self.open_path.clone();
             let last_child = self.open_last_child.pop().unwrap();
             self.open_path.pop();
-            match last_child {
-                Some(child) => {
-                    let mut path = frame_path;
-                    path.push(child);
-                    self.queue.push_back(StreamItem { path, value: None });
-                }
-                None => {
-                    self.queue.push_back(StreamItem {
-                        path: frame_path,
-                        value: Some(Value::empty_object()),
-                    });
-                }
-            }
+            self.queue.push_back(if last_child.is_some() {
+                StreamItem::Close
+            } else {
+                StreamItem::Value(Value::empty_object())
+            });
         }
         while self.open_path.len() < target.len() {
             let next = target[self.open_path.len()];
             self.record_child(next);
+            self.queue.push_back(StreamItem::Push(next));
             self.open_path.push(next);
             self.open_last_child.push(None);
         }
     }
 
-    fn push_value_event(&mut self, mut path: Vec<PathItem>, value: Value) {
+    fn push_value_event(&mut self, path: Vec<PathItem>, value: Value) {
         self.reopen_to(&path[..path.len() - 1]);
         self.record_child(path[path.len() - 1]);
-        super::document::events(value, &mut path, &mut self.queue);
+        self.queue.push_back(StreamItem::Push(path[path.len() - 1]));
+        super::document::events(value, &mut self.queue);
     }
 
     fn finish(&mut self) {
         self.reopen_to(&[]);
-        match self.root_last_child {
-            Some(first) => self.queue.push_back(StreamItem {
-                path: vec![first],
-                value: None,
-            }),
-            None => self.queue.push_back(StreamItem {
-                path: vec![],
-                value: Some(Value::empty_object()),
-            }),
-        }
+        self.queue.push_back(if self.root_last_child.is_some() {
+            StreamItem::Close
+        } else {
+            StreamItem::Value(Value::empty_object())
+        });
     }
 
     // -- line-level grammar --
@@ -730,11 +716,11 @@ impl<'a> TomlParser<'a> {
     }
 }
 
-fn is_bare_key_char(c: char) -> bool {
+const fn is_bare_key_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
 
-fn is_bare_token_char(c: char) -> bool {
+const fn is_bare_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.' | '_' | ':')
 }
 
@@ -772,7 +758,7 @@ fn insert_dotted(map: &mut IndexMap<strs::Symbol, Value>, names: &[String], valu
     *entry = Value::Object(Rc::new(inner_map));
 }
 
-impl<'a> Iterator for TomlParser<'a> {
+impl Iterator for TomlParser<'_> {
     type Item = ParseOutput;
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -789,7 +775,7 @@ impl<'a> Iterator for TomlParser<'a> {
         }
     }
 }
-impl<'a> Parser for TomlParser<'a> {}
+impl Parser for TomlParser<'_> {}
 
 // -- serializer --
 
@@ -880,7 +866,7 @@ fn write_value_inline(
             if *b { "true" } else { "false" },
         ),
         Value::Decimal(n) => {
-            super::json::push_styled(out, opts, render::ThemeIdx::Number, &n.to_string())
+            super::json::push_styled(out, opts, render::ThemeIdx::Number, &n.to_string());
         }
         Value::Float(f) => {
             let mut buf = String::new();
@@ -1026,12 +1012,16 @@ pub struct TomlSerializer {
     written: bool,
 }
 impl TomlSerializer {
-    pub fn new(output: Output, options: render::Options) -> Self {
+    #[must_use]
+    pub const fn new(output: Output, options: render::Options) -> Self {
         Self {
             output,
             options,
             written: false,
         }
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 impl Serializer for TomlSerializer {

@@ -11,17 +11,26 @@ fn array(value: &Value) -> Result<&Vec<Value>, JqError> {
     }
 }
 
-pub(crate) fn compare(a: &Value, b: &Value) -> Ordering {
+pub fn compare(a: &Value, b: &Value) -> Ordering {
     a.partial_cmp(b).unwrap_or(Ordering::Equal)
 }
 
-pub(crate) fn sort(input: &Value, _: &[Value]) -> Result<Value, JqError> {
-    let mut values = array(input)?.clone();
+pub fn sort(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+    let mut values = match input {
+        Value::Array(values) => values.as_ref().clone(),
+        _ => {
+            return Err(error(format!(
+                "{} ({}) cannot be sorted, as it is not an array",
+                input.type_name(),
+                crate::jq::vm::value::truncated_repr(input)
+            )));
+        }
+    };
     values.sort_by(compare);
     Ok(Value::Array(Rc::new(values)))
 }
 
-pub(crate) fn unique(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn unique(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(values) = sort(input, args)? else {
         unreachable!()
     };
@@ -30,14 +39,14 @@ pub(crate) fn unique(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Array(Rc::new(values)))
 }
 
-pub(crate) fn min(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn min(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(array(input)?
         .iter()
         .min_by(|a, b| compare(a, b))
         .cloned()
         .unwrap_or(Value::Null))
 }
-pub(crate) fn max(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn max(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(array(input)?
         .iter()
         .max_by(|a, b| compare(a, b))
@@ -45,7 +54,7 @@ pub(crate) fn max(input: &Value, _: &[Value]) -> Result<Value, JqError> {
         .unwrap_or(Value::Null))
 }
 
-pub(crate) fn contains(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn contains(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Bool(contains_value(input, &args[0])?))
 }
 
@@ -98,7 +107,7 @@ fn zip_keys(input: &Value, keys: &Value) -> Result<Vec<Value>, JqError> {
         .collect())
 }
 /// jq's native `_sort_by_impl(keys)`.
-pub(crate) fn sort_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn sort_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let pairs = Value::Array(Rc::new(zip_keys(input, &args[0])?));
     let Value::Array(sorted) = sort_by_keys(&pairs, &[])? else {
         unreachable!()
@@ -111,7 +120,7 @@ pub(crate) fn sort_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqErr
     )))
 }
 /// jq's native `_group_by_impl(keys)`.
-pub(crate) fn group_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn group_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let pairs = Value::Array(Rc::new(zip_keys(input, &args[0])?));
     let Value::Array(sorted) = sort_by_keys(&pairs, &[])? else {
         unreachable!()
@@ -119,21 +128,21 @@ pub(crate) fn group_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqEr
     group_sorted(&Value::Array(sorted), &[])
 }
 /// jq's native `_min_by_impl(keys)`.
-pub(crate) fn min_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn min_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(sorted) = sort_by_impl(input, args)? else {
         unreachable!()
     };
     Ok(sorted.first().cloned().unwrap_or(Value::Null))
 }
 /// jq's native `_max_by_impl(keys)`.
-pub(crate) fn max_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn max_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(sorted) = sort_by_impl(input, args)? else {
         unreachable!()
     };
     Ok(sorted.last().cloned().unwrap_or(Value::Null))
 }
 /// jq's native `_unique_by_impl(keys)`.
-pub(crate) fn unique_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn unique_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(groups) = group_by_impl(input, args)? else {
         unreachable!()
     };
@@ -144,7 +153,7 @@ pub(crate) fn unique_by_impl(input: &Value, args: &[Value]) -> Result<Value, JqE
             .collect(),
     )))
 }
-pub(crate) fn sort_by_keys(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn sort_by_keys(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let mut pairs = array(input)?.clone();
     pairs.sort_by(|a, b| match (a, b) {
         (Value::Array(a), Value::Array(b)) => compare(&a[0], &b[0]),
@@ -153,7 +162,7 @@ pub(crate) fn sort_by_keys(input: &Value, _: &[Value]) -> Result<Value, JqError>
     Ok(Value::Array(Rc::new(pairs)))
 }
 
-pub(crate) fn group_sorted(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn group_sorted(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let mut groups: Vec<Value> = Vec::new();
     let mut key: Option<Value> = None;
     let mut group = Vec::new();

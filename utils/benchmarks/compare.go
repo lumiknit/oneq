@@ -49,7 +49,7 @@ type report struct {
 var toolOrder = []string{"jq", "jaq", "gojq", "1q"}
 
 func main() {
-	setDir := flag.String("set", "benchmarks/set", "directory containing CASE.jq and CASE.jsonl")
+	setDir := flag.String("set", "utils/benchmarks/set", "directory containing CASE.jq and CASE.jsonl")
 	jqPath := flag.String("jq", "jq", "jq executable")
 	jaqPath := flag.String("jaq", "jaq", "jaq executable")
 	gojqPath := flag.String("gojq", "gojq", "gojq executable")

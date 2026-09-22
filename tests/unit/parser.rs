@@ -60,3 +60,23 @@ fn invoke_normalization_preserves_real_applications_and_comments() {
     let (_, root) = parse_pairs("test", "a | (b | c)").unwrap();
     assert_eq!(root.children[0].children.len(), 3);
 }
+
+#[test]
+fn object_shorthand_does_not_allow_computed_keys_without_values() {
+    for source in ["{foo}", "{$foo}", "{false}"] {
+        assert!(
+            parse_pairs("test", source).is_ok(),
+            "jq shorthand should remain valid: {source}"
+        );
+    }
+
+    for source in ["{(false)}", "{(.a)}"] {
+        assert!(
+            parse_pairs("test", source).is_err(),
+            "jq should reject an object key without a value: {source}"
+        );
+    }
+
+    assert!(parse_pairs("test", "{\"key\"}").is_ok());
+    assert!(parse_pairs("test", "{(false): .}").is_ok());
+}

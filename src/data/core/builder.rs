@@ -1,4 +1,4 @@
-//! Assembles the flat `StreamItem` stream a `Parser` produces into the
+//! Assembles the relative `StreamItem` stream a `Parser` produces into the
 //! per-document `Value`(s) a `ValueCollector` receives - one output value
 //! per top-level input document, shaped per `--stream` vs. the default.
 
@@ -9,25 +9,6 @@ use crate::data::stream::{PathItem, StreamItem};
 use crate::data::traits::ParseOutput;
 use crate::data::value::Value;
 use crate::strs;
-
-/// Mirrors jq `--stream`'s own rule for when a leaf/close event finishes a
-/// top-level document:
-/// - a leaf (`has_value`) closes its document iff its path is empty - it
-///   *is* the whole (scalar, or empty array/object) root value.
-/// - a close event (no value) reports the path of the container's *last
-///   child*, one level deeper than the container itself - so a close event
-///   finishes the root container iff that path has exactly one segment.
-///
-/// All data parsers normalize to this encoding. YAML waits for its next
-/// document marker or EOF and TOML waits for EOF before emitting events,
-/// so source-specific table/container endings cannot finish a document early.
-fn is_document_boundary(path: &[PathItem], has_value: bool) -> bool {
-    if has_value {
-        path.is_empty()
-    } else {
-        path.len() <= 1
-    }
-}
 
 /// jq `--stream`-style `[path, value]` pair, where each path segment is a
 /// JSON string (object key) or number (array index).
@@ -55,35 +36,23 @@ pub enum StreamOption {
     StreamError,
 }
 
-/// Turns the event stream a `Parser` emits into the `Value`(s) a
-/// `ValueCollector` (and from there, a `Serializer`) should receive - one
-/// output value per top-level input document.
-///
-/// - `Stream`: every event is independent - each one becomes its own value
-///   right away, `[path, value]` for a leaf or `[path]` for a close event
-///   (jq `--stream` shape).
-/// - `Default`: folds leaf events into a single `Value` via
-///   `Value::set_path` (close events carry no data, so they only ever
-///   affect document-boundary tracking), yielding the folded value once a
-///   document-boundary event arrives.
-///
-/// This is deliberately unaware of `--slurp` - jq's own `--stream --slurp`
-/// shows the two are independent: `--stream` picks *this* per-document
-/// shape, `--slurp` (a `ValueCollector`) then decides whether each of those
-/// documents is passed on immediately or collected into one array.
+/// Default mode owns a stack of open containers, deepest last. Stream modes
+/// materialize jq-style paths without assembling the document.
 pub enum BuilderKind {
     StreamError, // Same as stream, but pass parse error
     Stream,
-    Default { current: Value },
+    Default { containers: Vec<Value> },
 }
 
 /// Iterator adapter: pulls `ParseOutput`s from an inner `Parser` iterator
-/// `P` and yields the resulting per-document `Value`s. Any `Err` coming out
-/// of `P` is passed straight through as this iterator's next (and last)
-/// item.
+/// `P` and maintains one reusable path. Default mode yields complete root
+/// documents; stream modes yield each value/close event. Parser errors are
+/// forwarded, or encoded as values in `StreamError` mode.
 pub struct ValueBuilder<P> {
     parser: P,
     kind: BuilderKind,
+    path: Vec<PathItem>,
+    last_item: Option<PathItem>,
 }
 
 impl<P> ValueBuilder<P>
@@ -93,9 +62,12 @@ where
     pub fn new(parser: P, opt: StreamOption) -> Self {
         Self {
             parser,
+            path: Vec::with_capacity(8),
+            last_item: None,
             kind: match opt {
                 StreamOption::Default => BuilderKind::Default {
-                    current: Value::Null,
+                    // Scalars and empty containers need no stack allocation.
+                    containers: Vec::new(),
                 },
                 StreamOption::Stream => BuilderKind::Stream,
                 StreamOption::StreamError => BuilderKind::StreamError,
@@ -111,58 +83,96 @@ where
     type Item = Result<Value, DataError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            match &mut self.kind {
-                BuilderKind::StreamError => {
-                    return {
-                        let mut items: Vec<Value> = vec![];
-                        match self.parser.next()? {
-                            Ok(StreamItem { path, value }) => {
-                                items.push(path_to_value(&path));
-                                if let Some(value) = value {
-                                    items.push(value);
-                                }
-                            }
-                            Err(e) => {
-                                items.push(Value::String(e.to_string().into()));
-                            }
-                        };
-                        Some(Ok(Value::Array(Rc::new(items))))
-                    };
-                }
-
-                BuilderKind::Stream => {
-                    return {
-                        match self.parser.next()? {
-                            Ok(StreamItem { path, value }) => {
-                                let mut items = vec![path_to_value(&path)];
-                                if let Some(value) = value {
-                                    items.push(value);
-                                }
-                                Some(Ok(Value::Array(Rc::new(items))))
-                            }
-                            Err(e) => Some(Err(e)),
-                        }
-                    };
-                }
-
-                BuilderKind::Default { current } => {
-                    let event = match self.parser.next()? {
-                        Ok(event) => event,
-                        Err(e) => return Some(Err(e)),
-                    };
-                    let StreamItem { path, value } = event;
-                    let boundary = is_document_boundary(&path, value.is_some());
-                    if let Some(value) = value
-                        && let Err(e) = current.set_path_mut(&path, value)
-                    {
-                        return Some(Err(e));
-                    }
-                    if boundary {
-                        return Some(Ok(std::mem::replace(current, Value::Null)));
-                    }
-                }
+        match &mut self.kind {
+            BuilderKind::Default { containers } => {
+                Self::next_default(&mut self.parser, &mut self.path, containers)
             }
+            kind @ (BuilderKind::Stream | BuilderKind::StreamError) => Self::next_stream(
+                &mut self.parser,
+                &mut self.path,
+                &mut self.last_item,
+                matches!(kind, BuilderKind::StreamError),
+            ),
+        }
+    }
+}
+
+impl<P: Iterator<Item = ParseOutput>> ValueBuilder<P> {
+    fn next_default(
+        parser: &mut P,
+        path: &mut Vec<PathItem>,
+        containers: &mut Vec<Value>,
+    ) -> Option<Result<Value, DataError>> {
+        loop {
+            let value = match parser.next()? {
+                Err(error) => return Some(Err(error)),
+                Ok(StreamItem::Push(item)) => {
+                    // A second Push before Value/Close enters another
+                    // container. Siblings reuse the existing top frame.
+                    if containers.len() == path.len() {
+                        let child = if let Some(parent) = containers.last_mut() {
+                            let key = *path.last().expect("nested container has a path");
+                            match parent.child_mut(key) {
+                                Ok(slot) => std::mem::take(slot),
+                                Err(error) => return Some(Err(error)),
+                            }
+                        } else {
+                            Value::Null
+                        };
+                        // Move, never clone, the existing subtree. Leaving
+                        // Null in its parent preserves object insertion order
+                        // and allows repeated keys/table paths to be extended.
+                        containers.push(child);
+                    }
+                    path.push(item);
+                    continue;
+                }
+                Ok(StreamItem::Value(value)) => value,
+                Ok(StreamItem::Close) => containers.pop().expect("Close has an open container"),
+            };
+            let Some(item) = path.pop() else {
+                return Some(Ok(value));
+            };
+            let parent = containers.last_mut().expect("child has an open parent");
+            match parent.child_mut(item) {
+                Ok(slot) => *slot = value,
+                Err(error) => return Some(Err(error)),
+            }
+        }
+    }
+
+    fn next_stream(
+        parser: &mut P,
+        path: &mut Vec<PathItem>,
+        last_item: &mut Option<PathItem>,
+        stream_errors: bool,
+    ) -> Option<Result<Value, DataError>> {
+        loop {
+            let items = match parser.next()? {
+                Err(error) => {
+                    return Some(if stream_errors {
+                        Ok(Value::Array(Rc::new(vec![Value::String(
+                            error.to_string().into(),
+                        )])))
+                    } else {
+                        Err(error)
+                    });
+                }
+                Ok(StreamItem::Push(item)) => {
+                    path.push(item);
+                    continue;
+                }
+                Ok(StreamItem::Value(value)) => vec![path_to_value(path), value],
+                Ok(StreamItem::Close) => {
+                    let child = last_item.expect("Close must follow a completed child");
+                    path.push(child);
+                    let output_path = path_to_value(path);
+                    path.pop();
+                    vec![output_path]
+                }
+            };
+            *last_item = path.pop();
+            return Some(Ok(Value::Array(Rc::new(items))));
         }
     }
 }

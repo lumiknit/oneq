@@ -18,6 +18,7 @@ pub struct JqParser;
 /// unexpected token appearing somewhere in the middle). REPLs use this
 /// to decide whether to keep reading more lines instead of reporting
 /// a syntax error.
+#[must_use]
 pub fn is_incomplete(src: &str) -> bool {
     match JqParser::parse(Rule::program, src) {
         Ok(_) => false,

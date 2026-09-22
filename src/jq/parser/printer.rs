@@ -38,7 +38,8 @@ impl<'a> Children<'a> {
     }
 }
 impl<'a> Printer<'a> {
-    pub fn new(files: &'a FileSet, options: &'a FormatOptions) -> Self {
+    #[must_use]
+    pub const fn new(files: &'a FileSet, options: &'a FormatOptions) -> Self {
         Self {
             files,
             options,
@@ -47,6 +48,7 @@ impl<'a> Printer<'a> {
             indent: 0,
         }
     }
+    #[must_use]
     pub fn with_render(files: &'a FileSet, options: &'a render::Options) -> Self {
         Self {
             theme: options.theme.as_ref(),
@@ -175,7 +177,7 @@ impl<'a> Printer<'a> {
         if matches!(p.tag, PairTag::Array | PairTag::Object) && p.semantic_children().count() == 0 {
             return false;
         }
-        if p.children.iter().any(|p| p.is_comment()) {
+        if p.children.iter().any(super::pairs::Pair::is_comment) {
             return true;
         }
         let mut options = *self.options;
@@ -669,6 +671,7 @@ fn is_bare_ident(s: &str) -> bool {
     }
     chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
+#[must_use]
 pub fn is_binary(op: &str) -> bool {
     matches!(
         op,

@@ -25,21 +25,23 @@ pub enum Output {
 }
 
 impl Output {
-    pub fn new_nop() -> Self {
-        Output::Nop
+    #[must_use]
+    pub const fn new_nop() -> Self {
+        Self::Nop
     }
 
-    pub fn new_stdout() -> Self {
-        Output::Stdout
+    #[must_use]
+    pub const fn new_stdout() -> Self {
+        Self::Stdout
     }
 
-    pub fn new_string_buffer(buf: Rc<RefCell<Vec<u8>>>) -> Self {
-        Output::Bytes { buf }
+    pub const fn new_string_buffer(buf: Rc<RefCell<Vec<u8>>>) -> Self {
+        Self::Bytes { buf }
     }
 
     pub fn new_file(path: String) -> io::Result<Self> {
         let file = fs::File::create(&path)?;
-        Ok(Output::File {
+        Ok(Self::File {
             file: BufWriter::new(file),
         })
     }
@@ -53,7 +55,7 @@ impl Output {
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
         let file = NamedTempFile::new_in(dir)?;
-        Ok(Output::AtomicFile {
+        Ok(Self::AtomicFile {
             target_path: target_path.to_string(),
             file: BufWriter::new(file),
         })
@@ -63,7 +65,7 @@ impl Output {
         self.flush()?;
         match self {
             #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-            Output::AtomicFile { target_path, file } => {
+            Self::AtomicFile { target_path, file } => {
                 let tmp = file
                     .into_inner()
                     .map_err(|e| io::Error::other(e.to_string()))?;
@@ -79,26 +81,26 @@ impl Output {
 impl Write for Output {
     fn write(&mut self, content: &[u8]) -> io::Result<usize> {
         match self {
-            Output::Nop => Ok(content.len()),
-            Output::Stdout => super::stdout().write(content),
-            Output::Bytes { buf: b } => {
+            Self::Nop => Ok(content.len()),
+            Self::Stdout => super::stdout().write(content),
+            Self::Bytes { buf: b } => {
                 b.borrow_mut().extend_from_slice(content);
                 Ok(content.len())
             }
-            Output::File { file, .. } => file.write(content),
+            Self::File { file, .. } => file.write(content),
             #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-            Output::AtomicFile { file, .. } => file.write(content),
+            Self::AtomicFile { file, .. } => file.write(content),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            Output::Nop => Ok(()),
-            Output::Stdout => super::stdout().flush(),
-            Output::Bytes { .. } => Ok(()),
-            Output::File { file, .. } => file.flush(),
+            Self::Nop => Ok(()),
+            Self::Stdout => super::stdout().flush(),
+            Self::Bytes { .. } => Ok(()),
+            Self::File { file, .. } => file.flush(),
             #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-            Output::AtomicFile { file, .. } => file.flush(),
+            Self::AtomicFile { file, .. } => file.flush(),
         }
     }
 }

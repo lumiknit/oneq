@@ -3,13 +3,13 @@ use crate::{
     jq::vm::{JqError, value::error},
 };
 use std::rc::Rc;
-pub(crate) fn string(value: &Value) -> Result<&str, JqError> {
+pub fn string(value: &Value) -> Result<&str, JqError> {
     match value {
         Value::String(s) => Ok(s),
         _ => Err(error("string required")),
     }
 }
-pub(crate) fn utf8bytelength(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn utf8bytelength(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     match input {
         Value::String(s) => Ok(Value::int(s.len() as i64)),
         _ => Err(error(format!(
@@ -19,7 +19,7 @@ pub(crate) fn utf8bytelength(input: &Value, _: &[Value]) -> Result<Value, JqErro
         ))),
     }
 }
-pub(crate) fn explode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn explode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(input) = input else {
         return Err(error("explode input must be a string"));
     };
@@ -27,7 +27,7 @@ pub(crate) fn explode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
         input.chars().map(|c| Value::int(c as i64)).collect(),
     )))
 }
-pub(crate) fn ascii_downcase(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn ascii_downcase(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         // Preserve the error from the former explode/map/implode definition.
         return Err(error("explode input must be a string"));
@@ -37,7 +37,7 @@ pub(crate) fn ascii_downcase(input: &Value, _: &[Value]) -> Result<Value, JqErro
     }
     Ok(Value::String(s.to_ascii_lowercase().into()))
 }
-pub(crate) fn ascii_upcase(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn ascii_upcase(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         return Err(error("explode input must be a string"));
     };
@@ -46,7 +46,7 @@ pub(crate) fn ascii_upcase(input: &Value, _: &[Value]) -> Result<Value, JqError>
     }
     Ok(Value::String(s.to_ascii_uppercase().into()))
 }
-pub(crate) fn implode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn implode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::Array(a) = input else {
         return Err(error("implode input must be an array"));
     };
@@ -66,19 +66,19 @@ pub(crate) fn implode(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     }
     Ok(Value::String(result.into()))
 }
-pub(crate) fn startswith(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn startswith(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let (Value::String(s), Value::String(needle)) = (input, &args[0]) else {
         return Err(error("startswith() requires string inputs"));
     };
     Ok(Value::Bool(s.starts_with(&**needle)))
 }
-pub(crate) fn endswith(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn endswith(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let (Value::String(s), Value::String(needle)) = (input, &args[0]) else {
         return Err(error("endswith() requires string inputs"));
     };
     Ok(Value::Bool(s.ends_with(&**needle)))
 }
-pub(crate) fn trim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn trim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         return Err(error("trim input must be a string"));
     };
@@ -87,19 +87,19 @@ pub(crate) fn trim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     // `char::is_whitespace` (Unicode `White_Space` property).
     Ok(Value::String(s.trim().to_string().into()))
 }
-pub(crate) fn ltrim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn ltrim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         return Err(error("trim input must be a string"));
     };
     Ok(Value::String(s.trim_start().to_string().into()))
 }
-pub(crate) fn rtrim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn rtrim(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         return Err(error("trim input must be a string"));
     };
     Ok(Value::String(s.trim_end().to_string().into()))
 }
-pub(crate) fn split(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn split(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let s = string(input)?;
     let separator = string(&args[0])?;
     Ok(Value::Array(Rc::new(if separator.is_empty() {
@@ -121,7 +121,7 @@ pub(crate) fn split(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     })))
 }
 /// jq's native `_strindices($i)`: every character offset where `$i` occurs in `.`.
-pub(crate) fn strindices(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn strindices(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::String(s) = input else {
         return Err(error(format!(
             "{} ({}) cannot be searched, as it is not a string",
@@ -133,7 +133,7 @@ pub(crate) fn strindices(input: &Value, args: &[Value]) -> Result<Value, JqError
         return Err(error(format!(
             "{} ({}) is not a string",
             args[0].type_name(),
-            &args[0].to_compact_json()
+            args[0].to_compact_json()
         )));
     };
     let positions: Vec<Value> = if needle.is_empty() {
@@ -150,7 +150,7 @@ pub(crate) fn strindices(input: &Value, args: &[Value]) -> Result<Value, JqError
     };
     Ok(Value::Array(Rc::new(positions)))
 }
-pub(crate) fn bsearch(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn bsearch(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let Value::Array(a) = input else {
         return Err(error(format!(
             "{} ({}) cannot be searched from",
@@ -164,7 +164,7 @@ pub(crate) fn bsearch(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     };
     Ok(Value::int(n))
 }
-pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
+pub fn format(input: &Value, name: &str) -> Result<Value, JqError> {
     let text = match input {
         Value::String(s) => s.to_string(),
         v => v.to_compact_json(),
@@ -185,42 +185,36 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
                 out.push_str(&rest[..pos]);
                 let tail = &rest[pos + 1..];
                 let entity_end = tail.find(';').filter(|&i| i <= 10);
-                match entity_end {
-                    Some(semi) => {
-                        let ent = &tail[..semi];
-                        let decoded = match ent {
-                            "amp" => Some('&'),
-                            "lt" => Some('<'),
-                            "gt" => Some('>'),
-                            "apos" => Some('\''),
-                            "quot" => Some('"'),
-                            _ => {
-                                if let Some(hex) =
-                                    ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X"))
-                                {
-                                    u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
-                                } else if let Some(dec) = ent.strip_prefix('#') {
-                                    dec.parse::<u32>().ok().and_then(char::from_u32)
-                                } else {
-                                    None
-                                }
-                            }
-                        };
-                        match decoded {
-                            Some(c) => {
-                                out.push(c);
-                                rest = &tail[semi + 1..];
-                            }
-                            None => {
-                                out.push('&');
-                                rest = tail;
+                if let Some(semi) = entity_end {
+                    let ent = &tail[..semi];
+                    let decoded = match ent {
+                        "amp" => Some('&'),
+                        "lt" => Some('<'),
+                        "gt" => Some('>'),
+                        "apos" => Some('\''),
+                        "quot" => Some('"'),
+                        _ => {
+                            if let Some(hex) =
+                                ent.strip_prefix("#x").or_else(|| ent.strip_prefix("#X"))
+                            {
+                                u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
+                            } else if let Some(dec) = ent.strip_prefix('#') {
+                                dec.parse::<u32>().ok().and_then(char::from_u32)
+                            } else {
+                                None
                             }
                         }
-                    }
-                    None => {
+                    };
+                    if let Some(c) = decoded {
+                        out.push(c);
+                        rest = &tail[semi + 1..];
+                    } else {
                         out.push('&');
                         rest = tail;
                     }
+                } else {
+                    out.push('&');
+                    rest = tail;
                 }
             }
             out.push_str(rest);
@@ -261,9 +255,9 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
                 b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
             let mut result = String::new();
             for bytes in text.as_bytes().chunks(3) {
-                let n = ((bytes[0] as u32) << 16)
-                    | ((bytes.get(1).copied().unwrap_or(0) as u32) << 8)
-                    | (bytes.get(2).copied().unwrap_or(0) as u32);
+                let n = (u32::from(bytes[0]) << 16)
+                    | (u32::from(bytes.get(1).copied().unwrap_or(0)) << 8)
+                    | u32::from(bytes.get(2).copied().unwrap_or(0));
                 for i in 0..4 {
                     result.push(if i > bytes.len() {
                         '='
@@ -290,7 +284,7 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
                     b'/' => 63,
                     _ => return Err(error("invalid base64")),
                 };
-                buffer = (buffer << 6) | n as u32;
+                buffer = (buffer << 6) | u32::from(n);
                 bits += 6;
                 if bits >= 8 {
                     bits -= 8;
@@ -305,7 +299,7 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
             let mut buffer: u64 = 0;
             let mut bits = 0;
             for &b in text.as_bytes() {
-                buffer = (buffer << 8) | b as u64;
+                buffer = (buffer << 8) | u64::from(b);
                 bits += 8;
                 while bits >= 5 {
                     bits -= 5;
@@ -334,7 +328,7 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
                     b'2'..=b'7' => b - b'2' + 26,
                     _ => return Err(error("invalid base32")),
                 };
-                buffer = (buffer << 5) | n as u64;
+                buffer = (buffer << 5) | u64::from(n);
                 bits += 5;
                 if bits >= 8 {
                     bits -= 8;
@@ -343,7 +337,14 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
             }
             String::from_utf8_lossy(&out).into_owned()
         }
-        "@hex" => text.bytes().map(|b| format!("{b:02x}")).collect(),
+        "@hex" => {
+            use std::fmt::Write as _;
+            text.bytes()
+                .fold(String::with_capacity(text.len() * 2), |mut acc, b| {
+                    let _ = write!(acc, "{b:02x}");
+                    acc
+                })
+        }
         "@hexd" => {
             let digits: Vec<u8> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
             if !digits.len().is_multiple_of(2) {
@@ -409,32 +410,38 @@ pub(crate) fn format(input: &Value, name: &str) -> Result<Value, JqError> {
     };
     Ok(Value::String(result.into()))
 }
-macro_rules! formats { ($($function:ident => $name:literal),* $(,)?)=>{$(pub(crate) fn $function(input:&Value,_:&[Value])->Result<Value,JqError>{format(input,$name)})*}; }
+macro_rules! formats { ($($function:ident => $name:literal),* $(,)?)=>{$(pub fn $function(input:&Value,_:&[Value])->Result<Value,JqError>{format(input,$name)})*}; }
 formats!(text=>"@text",as_json=>"@json",html=>"@html",htmld=>"@htmld",uri=>"@uri",urid=>"@urid",base64=>"@base64",base64d=>"@base64d",base32=>"@base32",base32d=>"@base32d",hex=>"@hex",hexd=>"@hexd",sh=>"@sh",csv=>"@csv",tsv=>"@tsv");
 
 fn hex_digest(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
 }
-pub(crate) fn sha1(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn sha1(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(string(input)?.as_bytes());
     Ok(Value::String(hex_digest(&hasher.finalize()).into()))
 }
-pub(crate) fn sha256(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn sha256(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(string(input)?.as_bytes());
     Ok(Value::String(hex_digest(&hasher.finalize()).into()))
 }
-pub(crate) fn sha512(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn sha512(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     use sha2::{Digest, Sha512};
     let mut hasher = Sha512::new();
     hasher.update(string(input)?.as_bytes());
     Ok(Value::String(hex_digest(&hasher.finalize()).into()))
 }
 /// jq's `ascii`: a codepoint number to its single-character string.
-pub(crate) fn ascii(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn ascii(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let n = input
         .as_number()
         .ok_or_else(|| error("ascii requires a number"))?;

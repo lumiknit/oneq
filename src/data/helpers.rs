@@ -8,7 +8,8 @@ use crate::{
 };
 
 /// Returns strict JSON parser with input
-pub fn json_parser<'a>(i: Input<'a>) -> JsonParser<'a> {
+#[must_use]
+pub fn json_parser(i: Input<'_>) -> JsonParser<'_> {
     JsonParser::new(i, JsonParserOptions::default())
 }
 

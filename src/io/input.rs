@@ -19,7 +19,8 @@ pub struct InputTracker {
 }
 
 impl InputTracker {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             filename: None,
             line_number: 0,
@@ -27,6 +28,7 @@ impl InputTracker {
     }
 
     /// Wraps a fresh tracker for sharing between an `Input` and its consumer (e.g. the VM host).
+    #[must_use]
     pub fn shared() -> SharedInputTracker {
         Rc::new(RefCell::new(Self::new()))
     }
@@ -42,7 +44,7 @@ impl Default for InputTracker {
 /// filename/line-number without an `Arc`; `Input` is never sent across threads.
 pub type SharedInputTracker = Rc<RefCell<InputTracker>>;
 
-/// StreamReader is a wrapper around various input sources using for jq.
+/// `StreamReader` is a wrapper around various input sources using for jq.
 enum InputKind<'a> {
     Empty,
     Chain {
@@ -71,33 +73,35 @@ pub struct Input<'a> {
 }
 
 impl<'a> Input<'a> {
-    pub fn new_bytes_with_tracker(bytes: Vec<u8>, tracker: SharedInputTracker) -> Self {
+    pub const fn new_bytes_with_tracker(bytes: Vec<u8>, tracker: SharedInputTracker) -> Self {
         Self {
             kind: InputKind::Bytes(std::io::Cursor::new(bytes)),
             tracker,
         }
     }
 
+    #[must_use]
     pub fn new_stdin() -> Self {
         Self::new_stdin_with_tracker(InputTracker::shared())
     }
 
-    pub fn new_stdin_with_tracker(tracker: SharedInputTracker) -> Self {
+    pub const fn new_stdin_with_tracker(tracker: SharedInputTracker) -> Self {
         Input {
             kind: InputKind::Stdin,
             tracker,
         }
     }
 
-    pub fn new_empty_with_tracker(tracker: SharedInputTracker) -> Self {
+    pub const fn new_empty_with_tracker(tracker: SharedInputTracker) -> Self {
         Self::empty_with(tracker)
     }
 
+    #[must_use]
     pub fn new_str(s: &'a str) -> Self {
         Self::new_str_with_tracker(s, InputTracker::shared())
     }
 
-    pub fn new_str_with_tracker(s: &'a str, tracker: SharedInputTracker) -> Self {
+    pub const fn new_str_with_tracker(s: &'a str, tracker: SharedInputTracker) -> Self {
         Input {
             kind: InputKind::Str {
                 cur_string: s,
@@ -107,11 +111,12 @@ impl<'a> Input<'a> {
         }
     }
 
+    #[must_use]
     pub fn new_string(s: String) -> Self {
         Self::new_string_with_tracker(s, InputTracker::shared())
     }
 
-    pub fn new_string_with_tracker(s: String, tracker: SharedInputTracker) -> Self {
+    pub const fn new_string_with_tracker(s: String, tracker: SharedInputTracker) -> Self {
         Input {
             kind: InputKind::String {
                 cur_string: s,
@@ -152,19 +157,19 @@ impl<'a> Input<'a> {
     }
 
     /// Returns the shared tracker so a host can read the live filename/line number.
+    #[must_use]
     pub fn tracker(&self) -> SharedInputTracker {
         self.tracker.clone()
     }
 
     // Returns the current filename if reading from files, or None otherwise.
+    #[must_use]
     pub fn filename(&self) -> &str {
         match &self.kind {
             InputKind::Chain { cur, .. } => cur.filename(),
             InputKind::Empty => "<EMPTY>",
-            InputKind::Stdin => "<STDIN>",
-            InputKind::Str { .. } => "<STRING>",
-            InputKind::String { .. } => "<STRING>",
-            InputKind::Bytes(_) => "<STDIN>",
+            InputKind::Stdin | InputKind::Bytes(_) => "<STDIN>",
+            InputKind::Str { .. } | InputKind::String { .. } => "<STRING>",
             InputKind::File { cur_filename, .. } => cur_filename.as_str(),
         }
     }
@@ -193,8 +198,8 @@ impl<'a> Input<'a> {
     }
 }
 
-impl<'a> Input<'a> {
-    fn empty_with(tracker: SharedInputTracker) -> Self {
+impl Input<'_> {
+    const fn empty_with(tracker: SharedInputTracker) -> Self {
         Input {
             kind: InputKind::Empty,
             tracker,
@@ -221,7 +226,7 @@ impl<'a> Input<'a> {
     }
 }
 
-impl<'a> Read for Input<'a> {
+impl Read for Input<'_> {
     /// Read the next bytes into the provided buffer.
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if matches!(self.kind, InputKind::Chain { .. }) {
@@ -260,7 +265,7 @@ impl<'a> Read for Input<'a> {
             InputKind::Bytes(cursor) => cursor.read(buf),
         }?;
         if n > 0 {
-            let newlines = buf[..n].iter().filter(|&&b| b == b'\n').count();
+            let newlines = bytecount::count(&buf[..n], b'\n');
             if newlines > 0 {
                 self.tracker.borrow_mut().line_number += newlines;
             }

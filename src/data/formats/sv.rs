@@ -20,14 +20,14 @@ use crate::{
 };
 
 /// Whether this format's parser/serializer treats the first row as a header.
-fn has_header(format: crate::data::DataFormat) -> bool {
+const fn has_header(format: crate::data::DataFormat) -> bool {
     matches!(
         format,
         crate::data::DataFormat::Csvh | crate::data::DataFormat::Tsvh
     )
 }
 
-fn separator(format: crate::data::DataFormat) -> char {
+const fn separator(format: crate::data::DataFormat) -> char {
     match format {
         crate::data::DataFormat::Tsv | crate::data::DataFormat::Tsvh => '\t',
         _ => ',',
@@ -53,6 +53,7 @@ pub struct SvParser<'a> {
     queue: VecDeque<StreamItem>,
 }
 impl<'a> SvParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>, format: crate::data::DataFormat) -> Self {
         Self {
             input: BufReader::new(input),
@@ -98,7 +99,7 @@ impl<'a> SvParser<'a> {
             while n < width {
                 let read = self
                     .input
-                    .read(&mut bytes[n..n + 1])
+                    .read(&mut bytes[n..=n])
                     .map_err(DataError::IOError)?;
                 if read == 0 {
                     return Ok(None);
@@ -114,14 +115,14 @@ impl<'a> SvParser<'a> {
         }
     }
 
-    fn key_for_col(&mut self) -> ObjectKey {
+    fn key_for_col(&self) -> ObjectKey {
         self.header_keys
             .get(self.col as usize)
             .copied()
             .unwrap_or_else(|| strs::intern(&format!("_{}", self.col)))
     }
 
-    fn path_column(&mut self) -> PathItem {
+    fn path_column(&self) -> PathItem {
         if self.with_header {
             PathItem::new_key(self.key_for_col())
         } else {
@@ -147,11 +148,15 @@ impl<'a> SvParser<'a> {
             self.header_keys.push(strs::intern(&value));
             None
         } else {
-            let path = vec![PathItem::new_idx(self.line), self.path_column()];
-            Some(StreamItem {
-                path,
-                value: Some(crate::data::Value::String(value.into())),
-            })
+            if self.col == 0 {
+                self.queue
+                    .push_back(StreamItem::Push(PathItem::new_idx(self.line)));
+            }
+            let column = self.path_column();
+            self.queue.push_back(StreamItem::Push(column));
+            self.queue
+                .push_back(StreamItem::Value(Value::String(value.into())));
+            self.queue.pop_front()
         }
     }
 
@@ -159,11 +164,7 @@ impl<'a> SvParser<'a> {
         if self.header {
             self.header = false;
         } else {
-            let column = self.path_column();
-            self.queue.push_back(StreamItem {
-                path: vec![PathItem::new_idx(self.line), column],
-                value: None,
-            });
+            self.queue.push_back(StreamItem::Close);
             self.line += 1;
         }
         self.col = 0;
@@ -172,14 +173,17 @@ impl<'a> SvParser<'a> {
     }
 
     fn finish_document(&mut self) {
-        self.queue.push_back(StreamItem {
-            path: vec![PathItem::new_idx(self.line)],
-            value: None,
+        self.queue.push_back(if self.line == 0 {
+            // Preserve the existing null result for an empty/header-only
+            // document; there is no child that a Close could refer to.
+            StreamItem::Value(Value::Null)
+        } else {
+            StreamItem::Close
         });
         self.done = true;
     }
 }
-impl<'a> Iterator for SvParser<'a> {
+impl Iterator for SvParser<'_> {
     type Item = ParseOutput;
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(event) = self.queue.pop_front() {
@@ -208,11 +212,7 @@ impl<'a> Iterator for SvParser<'a> {
                     Ok(None) => {
                         if self.row_has_field || self.field_started {
                             if let Some(event) = self.finish_field() {
-                                let column = self.path_column();
-                                self.queue.push_back(StreamItem {
-                                    path: vec![PathItem::new_idx(self.line), column],
-                                    value: None,
-                                });
+                                self.queue.push_back(StreamItem::Close);
                                 self.line += 1;
                                 self.col = 0;
                                 self.row_has_field = false;
@@ -286,7 +286,7 @@ impl<'a> Iterator for SvParser<'a> {
         }
     }
 }
-impl<'a> Parser for SvParser<'a> {}
+impl Parser for SvParser<'_> {}
 
 fn cell(value: &Value) -> String {
     match value {
@@ -429,13 +429,21 @@ pub struct SvSerializer {
     header: bool,
 }
 impl SvSerializer {
-    pub fn new(output: Output, options: render::Options, format: crate::data::DataFormat) -> Self {
+    #[must_use]
+    pub const fn new(
+        output: Output,
+        options: render::Options,
+        format: crate::data::DataFormat,
+    ) -> Self {
         Self {
             output,
             options,
             sep: separator(format),
             header: has_header(format),
         }
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 impl Serializer for SvSerializer {

@@ -51,8 +51,11 @@ pub enum DataFormat {
 }
 
 impl DataFormat {
-    fn as_str(&self) -> &'static str {
-        use DataFormat::*;
+    const fn as_str(&self) -> &'static str {
+        use DataFormat::{
+            CBOR, Csv, Csvh, Env, ExportEnv, JQ, Json, Json5, JsonLoose, PyLit, Raw, RawSlurp,
+            Toml, Tsv, Tsvh, Xml, Yaml,
+        };
         match self {
             Raw => "raw",
             RawSlurp => "rawslurp",
@@ -84,10 +87,13 @@ impl FromStr for DataFormat {
     type Err = ();
 
     fn from_str(name: &str) -> Result<Self, Self::Err> {
-        use DataFormat::*;
+        use DataFormat::{
+            CBOR, Csv, Csvh, Env, ExportEnv, JQ, Json, Json5, JsonLoose, PyLit, Raw, RawSlurp,
+            Toml, Tsv, Tsvh, Xml, Yaml,
+        };
         let cano: String = name
             .chars()
-            .filter(|c| c.is_ascii_alphanumeric())
+            .filter(char::is_ascii_alphanumeric)
             .map(|c| c.to_ascii_lowercase())
             .collect();
 
@@ -95,8 +101,7 @@ impl FromStr for DataFormat {
             "raw" => Raw,
             "rawslurp" => RawSlurp,
 
-            "" => Json, // Empty case is JSON.
-            "json" => Json,
+            "" | "json" => Json,
 
             "json5" => Json5,
             "j" | "jsonloose" => JsonLoose,
@@ -180,7 +185,7 @@ impl<'a> AnyParser<'a> {
     }
 }
 
-impl<'a> Iterator for AnyParser<'a> {
+impl Iterator for AnyParser<'_> {
     type Item = ParseOutput;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -266,5 +271,18 @@ impl AnySerializer {
             self.put(v?)?;
         }
         Ok(())
+    }
+    pub fn finish(self) -> std::io::Result<()> {
+        match self {
+            Self::Xml(x) => x.finish(),
+            Self::Yaml(x) => x.finish(),
+            Self::Toml(x) => x.finish(),
+            Self::Raw(x) => x.finish(),
+            Self::Sv(x) => x.finish(),
+            Self::Env(x) => x.finish(),
+            Self::Json(x) => x.finish(),
+            Self::Cbor(x) => x.finish(),
+            Self::Jq(x) => x.finish(),
+        }
     }
 }

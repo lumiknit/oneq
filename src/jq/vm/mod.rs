@@ -87,10 +87,11 @@ impl JqError {
     /// matching `jq: error (at <stdin>:1): boom` for `error("boom")`; any
     /// other jq value prints as `(not a string): <value>`, matching jq's
     /// `jq: error (at <stdin>:1) (not a string): 42` for `error(42)`.
+    #[must_use]
     pub fn user_message(&self) -> String {
         match self {
-            JqError::Runtime(Value::String(s)) => s.to_string(),
-            JqError::Runtime(value) => format!("(not a string): {value}"),
+            Self::Runtime(Value::String(s)) => s.to_string(),
+            Self::Runtime(value) => format!("(not a string): {value}"),
             other => other.to_string(),
         }
     }
@@ -389,7 +390,7 @@ impl Vm {
                 let path = self.input.path.take().ok_or_else(|| {
                     value::error(format!(
                         "Invalid path expression with result {}",
-                        &self.input.value.to_compact_json()
+                        self.input.value.to_compact_json()
                     ))
                 })?;
                 self.input.value = Value::Array(Rc::new(path.to_vec()));
@@ -420,8 +421,8 @@ impl Vm {
                 if base_path.is_none() && self.path_depth > 0 {
                     return Err(value::error(format!(
                         "Invalid path expression near attempt to access element {} of {}",
-                        &self.input.value.to_compact_json(),
-                        &base.to_compact_json()
+                        self.input.value.to_compact_json(),
+                        base.to_compact_json()
                     )));
                 }
                 self.input.path = base_path;
@@ -446,11 +447,11 @@ impl Vm {
                 } = base;
                 if base_path.is_none() && self.path_depth > 0 {
                     let mut bounds = indexmap::IndexMap::new();
-                    bounds.insert(strs::keyword_start(), start.clone());
+                    bounds.insert(strs::keyword_start(), start);
                     bounds.insert(strs::keyword_end(), self.input.value.clone());
                     return Err(value::error(format!(
                         "Invalid path expression near attempt to access element {} of {}",
-                        &Value::Object(Rc::new(bounds)).to_compact_json(),
+                        Value::Object(Rc::new(bounds)).to_compact_json(),
                         base.to_compact_json()
                     )));
                 }
@@ -467,7 +468,7 @@ impl Vm {
                 if self.input.path.is_none() && self.path_depth > 0 {
                     return Err(value::error(format!(
                         "Invalid path expression near attempt to iterate through {}",
-                        &self.input.value.to_compact_json()
+                        self.input.value.to_compact_json()
                     )));
                 }
                 self.advance_iteration(0)?;

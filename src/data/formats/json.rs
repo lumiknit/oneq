@@ -2,7 +2,7 @@
 //!
 //! The serializer only ever emits strict JSON - `render::Options` controls
 //! its layout (compact level, indent, ascii-only escaping, sort-keys,
-//! doc_begin/doc_end/flush, colors), but never its grammar.
+//! `doc_begin/doc_end/flush`, colors), but never its grammar.
 //!
 //! The parser is intentionally more permissive, along two independent
 //! axes:
@@ -19,8 +19,8 @@
 //!   least `Json5`, and it isn't a value at all: the key (or array slot)
 //!   it's assigned to is simply dropped.
 
-use std::collections::VecDeque;
-use std::io::Write;
+use std::fmt::Write as _;
+use std::io::Write as _;
 
 use indexmap::IndexMap;
 
@@ -144,23 +144,28 @@ impl KeywordPreset {
         }
     }
 
-    pub fn null_word(&self) -> &'static str {
+    #[must_use]
+    pub const fn null_word(&self) -> &'static str {
         self.null_words[0]
     }
 
-    pub fn true_word(&self) -> &'static str {
+    #[must_use]
+    pub const fn true_word(&self) -> &'static str {
         self.true_words[0]
     }
 
-    pub fn false_word(&self) -> &'static str {
+    #[must_use]
+    pub const fn false_word(&self) -> &'static str {
         self.false_words[0]
     }
 
-    pub fn infinity_word(&self) -> Option<&'static str> {
+    #[must_use]
+    pub const fn infinity_word(&self) -> Option<&'static str> {
         self.infinity_words.first().copied()
     }
 
-    pub fn nan_word(&self) -> Option<&'static str> {
+    #[must_use]
+    pub const fn nan_word(&self) -> Option<&'static str> {
         self.nan_words.first().copied()
     }
 
@@ -201,29 +206,57 @@ fn is_ident_part(c: char) -> bool {
     c == '_' || c == '$' || c.is_alphanumeric()
 }
 
-/// Pull-style JSON reader: `next_event` hands back one `StreamItem` at a
-/// time, but under the hood a whole top-level document is parsed in one go
-/// into `queue` as soon as it's needed - `CharReader` still only reads as
-/// many bytes as parsing that document actually touches, so a value on a
-/// still-open stream is available as soon as it's complete.
+#[derive(Clone, Copy)]
+struct Container {
+    object: bool,
+    first: bool,
+    count: ArrayIndex,
+}
+
+impl Container {
+    const fn closer(self) -> char {
+        if self.object { '}' } else { ']' }
+    }
+
+    fn empty(self) -> Value {
+        if self.object {
+            Value::empty_object()
+        } else {
+            Value::empty_array()
+        }
+    }
+}
+
+enum ParsedValue {
+    Scalar(Value),
+    Container,
+    Undefined,
+}
+
+/// Pull-style JSON reader. Only container state and at most one scalar
+/// awaiting its preceding Push are retained; no document event queue or
+/// full paths are built.
 pub struct JsonParser<'a> {
     reader: CharReader<'a>,
     filename: String,
     options: JsonParserOptions,
-    queue: VecDeque<StreamItem>,
+    stack: Vec<Container>,
+    pending_value: Option<Value>,
     eof: bool,
     line: u32,
     col: u32,
 }
 
 impl<'a> JsonParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>, options: JsonParserOptions) -> Self {
         let filename = input.filename().to_string();
         Self {
             reader: CharReader::new(input),
             filename,
             options,
-            queue: VecDeque::new(),
+            stack: Vec::new(),
+            pending_value: None,
             eof: false,
             line: 1,
             col: 1,
@@ -330,7 +363,7 @@ impl<'a> JsonParser<'a> {
             Some(c) if self.options.loose_level >= LooseLevel::Json5 && is_ident_start(c) => {
                 Ok(self.read_word())
             }
-            Some(c) => Err(self.err(format!("unexpected character '{}' in object key", c))),
+            Some(c) => Err(self.err(format!("unexpected character '{c}' in object key"))),
             None => Err(self.err("unexpected end of input in object key")),
         }
     }
@@ -338,9 +371,8 @@ impl<'a> JsonParser<'a> {
     fn parse_hex4(&mut self) -> Result<u32, DataError> {
         let mut v: u32 = 0;
         for _ in 0..4 {
-            let c = match self.bump() {
-                Some(c) => c,
-                None => return Err(self.err("unterminated unicode escape")),
+            let Some(c) = self.bump() else {
+                return Err(self.err("unterminated unicode escape"));
             };
             let d = c
                 .to_digit(16)
@@ -394,7 +426,7 @@ impl<'a> JsonParser<'a> {
                             }
                         }
                     }
-                    Some(c) => return Err(self.err(format!("invalid escape '\\{}'", c))),
+                    Some(c) => return Err(self.err(format!("invalid escape '\\{c}'"))),
                     None => return Err(self.err("unterminated escape sequence")),
                 },
                 Some(c) => s.push(c),
@@ -437,9 +469,9 @@ impl<'a> JsonParser<'a> {
             }
         }
 
-        if matches!(self.peek(), Some('e') | Some('E')) {
+        if matches!(self.peek(), Some('e' | 'E')) {
             s.push(self.bump().unwrap());
-            if matches!(self.peek(), Some('+') | Some('-')) {
+            if matches!(self.peek(), Some('+' | '-')) {
                 s.push(self.bump().unwrap());
             }
             let mut exp_digits = false;
@@ -470,36 +502,27 @@ impl<'a> JsonParser<'a> {
         Ok(Value::decimal(decimal))
     }
 
-    /// Parses one value at `path`, queuing whatever `StreamItem`(s) it
-    /// produces. Returns `false` iff the value was a bare `undefined` -
-    /// nothing was queued, and the caller (array/object loop) should treat
-    /// this slot as if it never existed.
-    fn parse_value(&mut self, path: Vec<PathItem>) -> Result<bool, DataError> {
+    /// Parse a scalar or enter a container. Undefined is resolved before
+    /// emitting Push so an omitted member never changes the builder path.
+    fn parse_value(&mut self) -> Result<ParsedValue, DataError> {
         self.skip_ws()?;
         match self.peek() {
-            Some('{') => {
-                self.parse_object(path)?;
-                Ok(true)
-            }
-            Some('[') => {
-                self.parse_array(path)?;
-                Ok(true)
+            Some(c @ ('{' | '[')) => {
+                self.bump();
+                self.stack.push(Container {
+                    object: c == '{',
+                    first: true,
+                    count: 0,
+                });
+                Ok(ParsedValue::Container)
             }
             Some('"') => {
                 let s = self.parse_string('"')?;
-                self.queue.push_back(StreamItem {
-                    path,
-                    value: Some(Value::String(s.into())),
-                });
-                Ok(true)
+                Ok(ParsedValue::Scalar(Value::String(s.into())))
             }
             Some('\'') if self.options.loose_level >= LooseLevel::Json5 => {
                 let s = self.parse_string('\'')?;
-                self.queue.push_back(StreamItem {
-                    path,
-                    value: Some(Value::String(s.into())),
-                });
-                Ok(true)
+                Ok(ParsedValue::Scalar(Value::String(s.into())))
             }
             // A signed `Infinity`/`NaN` spelling: same idea as an ordinary
             // signed number, but the sign is followed by a keyword instead
@@ -521,19 +544,11 @@ impl<'a> JsonParser<'a> {
                     Some(Keyword::NaN) => Value::Float(f64::NAN),
                     _ => return Err(self.err(format!("unexpected token '{c}{word}'"))),
                 };
-                self.queue.push_back(StreamItem {
-                    path,
-                    value: Some(pv),
-                });
-                Ok(true)
+                Ok(ParsedValue::Scalar(pv))
             }
             Some(c) if c == '-' || c == '+' || c == '.' || c.is_ascii_digit() => {
                 let n = self.parse_number()?;
-                self.queue.push_back(StreamItem {
-                    path,
-                    value: Some(n),
-                });
-                Ok(true)
+                Ok(ParsedValue::Scalar(n))
             }
             Some(c) if is_ident_start(c) => {
                 let word = self.read_word();
@@ -545,18 +560,14 @@ impl<'a> JsonParser<'a> {
                         Keyword::Infinity => Value::Float(f64::INFINITY),
                         Keyword::NaN => Value::Float(f64::NAN),
                     };
-                    self.queue.push_back(StreamItem {
-                        path,
-                        value: Some(pv),
-                    });
-                    Ok(true)
+                    Ok(ParsedValue::Scalar(pv))
                 } else if self.options.loose_level >= LooseLevel::Json5 && word == "undefined" {
-                    Ok(false)
+                    Ok(ParsedValue::Undefined)
                 } else {
-                    Err(self.err(format!("unexpected token '{}'", word)))
+                    Err(self.err(format!("unexpected token '{word}'")))
                 }
             }
-            Some(c) => Err(self.err(format!("unexpected character '{}'", c))),
+            Some(c) => Err(self.err(format!("unexpected character '{c}'"))),
             None => Err(self.err("unexpected end of input")),
         }
     }
@@ -597,147 +608,96 @@ impl<'a> JsonParser<'a> {
                     // anyway, so just carry on to the next member.
                     Ok(false)
                 } else {
-                    Err(self.err(format!("expected ',' or '{}'", closer)))
+                    Err(self.err(format!("expected ',' or '{closer}'")))
                 }
             }
         }
     }
 
-    fn parse_array(&mut self, path: Vec<PathItem>) -> Result<(), DataError> {
-        self.bump(); // '['
-        self.skip_ws()?;
-        if self.peek() == Some(']') {
-            self.bump();
-            self.queue.push_back(StreamItem {
-                path,
-                value: Some(Value::empty_array()),
-            });
-            return Ok(());
+    fn next_event(&mut self) -> Result<Option<StreamItem>, DataError> {
+        if let Some(value) = self.pending_value.take() {
+            return Ok(Some(StreamItem::Value(value)));
         }
-
-        let mut idx: ArrayIndex = 0;
-        // Only the *last* child's index is needed for the close event, so
-        // remember that rather than keeping a clone of its whole path.
-        let mut last_child_idx = None;
         loop {
-            self.skip_ws()?;
-            let mut child_path = path.clone();
-            child_path.push(PathItem::new_idx(idx));
-            if self.parse_value(child_path)? {
-                last_child_idx = Some(idx);
-                idx += 1;
-            }
-            if self.consume_separator(']')? {
-                break;
-            }
-        }
-
-        self.queue.push_back(match last_child_idx {
-            Some(li) => StreamItem {
-                path: {
-                    let mut lp = path;
-                    lp.push(PathItem::new_idx(li));
-                    lp
-                },
-                value: None,
-            },
-            // every element was `undefined` - the array is effectively empty.
-            None => StreamItem {
-                path,
-                value: Some(Value::empty_array()),
-            },
-        });
-        Ok(())
-    }
-
-    fn parse_object(&mut self, path: Vec<PathItem>) -> Result<(), DataError> {
-        self.bump(); // '{'
-        self.skip_ws()?;
-        if self.peek() == Some('}') {
-            self.bump();
-            self.queue.push_back(StreamItem {
-                path,
-                value: Some(Value::empty_object()),
-            });
-            return Ok(());
-        }
-
-        // As in `parse_array`: the close event only needs the last child's
-        // key, not a second copy of its path.
-        let mut last_child_key = None;
-        loop {
-            self.skip_ws()?;
-            let key = self.parse_key()?;
-            self.skip_ws()?;
-            match self.peek() {
-                Some(':') => {
+            if let Some(frame) = self.stack.last().copied() {
+                let closed = if frame.first {
+                    self.skip_ws()?;
+                    if self.peek() == Some(frame.closer()) {
+                        self.bump();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    self.consume_separator(frame.closer())?
+                };
+                if closed {
+                    self.stack.pop();
+                    return Ok(Some(if frame.count == 0 {
+                        StreamItem::Value(frame.empty())
+                    } else {
+                        StreamItem::Close
+                    }));
+                }
+                let parent = self.stack.len() - 1;
+                self.stack[parent].first = false;
+                self.skip_ws()?;
+                let item = if frame.object {
+                    let key = self.parse_key()?;
+                    self.skip_ws()?;
+                    if self.peek() != Some(':') {
+                        return Err(self.err("Objects must consist of key:value pairs"));
+                    }
                     self.bump();
+                    PathItem::new_key_str(&key)
+                } else {
+                    PathItem::new_idx(frame.count)
+                };
+                match self.parse_value()? {
+                    ParsedValue::Undefined => continue,
+                    ParsedValue::Scalar(value) => self.pending_value = Some(value),
+                    ParsedValue::Container => {}
                 }
-                _ => return Err(self.err("Objects must consist of key:value pairs")),
+                self.stack[parent].count += 1;
+                return Ok(Some(StreamItem::Push(item)));
             }
             self.skip_ws()?;
-
-            let item = PathItem::new_key_str(&key);
-            let mut child_path = path.clone();
-            child_path.push(item);
-            if self.parse_value(child_path)? {
-                last_child_key = Some(item);
+            if self.peek().is_none() {
+                if let Some(e) = self.reader.take_read_error() {
+                    return Err(DataError::IOError(std::io::Error::other(e)));
+                }
+                return Ok(None);
             }
-            if self.consume_separator('}')? {
-                break;
+            match self.parse_value()? {
+                ParsedValue::Scalar(value) => return Ok(Some(StreamItem::Value(value))),
+                ParsedValue::Container | ParsedValue::Undefined => {}
             }
         }
-
-        self.queue.push_back(match last_child_key {
-            Some(lk) => StreamItem {
-                path: {
-                    let mut lp = path;
-                    lp.push(lk);
-                    lp
-                },
-                value: None,
-            },
-            // every member's value was `undefined` - the object is effectively empty.
-            None => StreamItem {
-                path,
-                value: Some(Value::empty_object()),
-            },
-        });
-        Ok(())
     }
 }
 
-impl<'a> Iterator for JsonParser<'a> {
+impl Iterator for JsonParser<'_> {
     type Item = ParseOutput;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(item) = self.queue.pop_front() {
-                return Some(Ok(item));
-            }
-            if self.eof {
-                return None;
-            }
-            if let Err(e) = self.skip_ws() {
+        if self.eof {
+            return None;
+        }
+        match self.next_event() {
+            Ok(Some(event)) => Some(Ok(event)),
+            Ok(None) => {
                 self.eof = true;
-                return Some(Err(e));
+                None
             }
-            if self.peek().is_none() {
+            Err(error) => {
                 self.eof = true;
-                return None;
-            }
-            // A bare top-level `undefined` queues nothing - loop back
-            // around to parse the next document rather than reporting a
-            // (nonexistent) event for it.
-            if let Err(e) = self.parse_value(Vec::new()) {
-                self.eof = true;
-                return Some(Err(e));
+                Some(Err(error))
             }
         }
     }
 }
 
-impl<'a> Parser for JsonParser<'a> {}
+impl Parser for JsonParser<'_> {}
 
 pub(super) fn push_styled(out: &mut String, opts: &render::Options, idx: ThemeIdx, s: &str) {
     if let Some(style) = opts.style_ansi(idx) {
@@ -806,9 +766,9 @@ fn format_float(f: f64) -> String {
             out.push_str(&digits[1..]);
         }
         if exp >= 0 {
-            out.push_str(&format!("e+{:02}", exp));
+            let _ = write!(out, "e+{exp:02}");
         } else {
-            out.push_str(&format!("e-{:02}", -exp));
+            let _ = write!(out, "e-{:02}", -exp);
         }
     } else if decpt <= 0 {
         out.push_str("0.");
@@ -839,27 +799,26 @@ pub(super) fn write_value(
         Value::Decimal(n) => push_styled(out, opts, ThemeIdx::Number, &n.to_string()),
         Value::Float(f) => {
             if f.is_nan() {
-                if keywords.emit_nonfinite_words {
-                    if let Some(word) = keywords.nan_word() {
-                        push_styled(out, opts, ThemeIdx::Number, word);
-                        return;
-                    }
+                if keywords.emit_nonfinite_words
+                    && let Some(word) = keywords.nan_word()
+                {
+                    push_styled(out, opts, ThemeIdx::Number, word);
+                    return;
                 }
                 push_styled(out, opts, ThemeIdx::Null, "null");
                 return;
             }
-            if !f.is_finite() {
-                if keywords.emit_nonfinite_words {
-                    if let Some(word) = keywords.infinity_word() {
-                        let word = if f.is_sign_negative() {
-                            format!("-{word}")
-                        } else {
-                            word.to_string()
-                        };
-                        push_styled(out, opts, ThemeIdx::Number, &word);
-                        return;
-                    }
-                }
+            if !f.is_finite()
+                && keywords.emit_nonfinite_words
+                && let Some(word) = keywords.infinity_word()
+            {
+                let word = if f.is_sign_negative() {
+                    format!("-{word}")
+                } else {
+                    word.to_string()
+                };
+                push_styled(out, opts, ThemeIdx::Number, &word);
+                return;
             }
             let v = if f.is_finite() {
                 *f
@@ -973,11 +932,13 @@ pub struct JsonSerializer {
 }
 
 impl JsonSerializer {
+    #[must_use]
     pub fn new(output: Output, render_options: render::Options) -> Self {
         Self::with_options(output, render_options, JsonSerializerOptions::default())
     }
 
-    pub fn with_options(
+    #[must_use]
+    pub const fn with_options(
         output: Output,
         render_options: render::Options,
         options: JsonSerializerOptions,
@@ -987,6 +948,9 @@ impl JsonSerializer {
             render_options,
             options,
         }
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 

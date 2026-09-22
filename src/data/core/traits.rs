@@ -7,9 +7,7 @@ use crate::{
 
 pub type ParseOutput = Result<StreamItem, DataError>;
 
-/// Parser trait implies the implementer can offer next JSON value events.
-/// The path and value should be prepared by the caller, and the implemented
-/// modifies them in place.
+/// Parser emitting relative Push/Value/Close traversal events.
 pub trait Parser
 where
     Self: Iterator<Item = ParseOutput>,
@@ -51,7 +49,8 @@ impl<'a> CharReader<'a> {
     /// `peek`/`bump` call pulls only as many bytes as it needs, so a
     /// value on a still-open stream (e.g. a line typed into stdin) is
     /// available as soon as it's complete.
-    pub fn new(reader: Input<'a>) -> Self {
+    #[must_use]
+    pub const fn new(reader: Input<'a>) -> Self {
         CharReader {
             reader,
             eof: false,
@@ -65,7 +64,7 @@ impl<'a> CharReader<'a> {
     /// Takes the pending read error, if any - call this when hitting an
     /// unexpected EOF, so the real cause (rather than a generic "end of
     /// input") gets surfaced.
-    pub fn take_read_error(&mut self) -> Option<String> {
+    pub const fn take_read_error(&mut self) -> Option<String> {
         self.read_error.take()
     }
 
@@ -161,5 +160,4 @@ impl<'a> CharReader<'a> {
         }
         true
     }
-
 }

@@ -11,7 +11,8 @@ pub struct Options {
 }
 
 impl Options {
-    pub fn new(out: FormatOptions) -> Self {
+    #[must_use]
+    pub const fn new(out: FormatOptions) -> Self {
         Self { out, theme: None }
     }
 
@@ -20,10 +21,12 @@ impl Options {
         self
     }
 
+    #[must_use]
     pub fn style_ansi(&self, idx: ThemeIdx) -> Option<TextStyle> {
         self.theme.as_ref()?.styles[idx as usize].clone().into()
     }
 
+    #[must_use]
     pub fn style_reset(&self) -> Option<&'static str> {
         self.theme.as_ref().map(|_| RESET)
     }

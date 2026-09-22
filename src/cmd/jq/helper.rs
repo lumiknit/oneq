@@ -48,7 +48,7 @@ pub fn modulemeta(
         _ => indexmap::IndexMap::new(),
     };
 
-    let deps: Vec<Value> = source
+    let dependencies: Vec<Value> = source
         .imports
         .iter()
         .map(|import| {
@@ -76,7 +76,7 @@ pub fn modulemeta(
     // semantic children are its params followed by its body and (mirroring
     // `lower_definitions`'s own `children.len() - 2`) one further trailing
     // slot, so the parameter count is `len() - 2`.
-    let defs: Vec<Value> = source
+    let definitions: Vec<Value> = source
         .root
         .semantic_children()
         .filter(|pair| pair.tag == PairTag::Def)
@@ -87,8 +87,8 @@ pub fn modulemeta(
         })
         .collect();
 
-    result.insert(strs::keyword_deps(), Value::Array(Rc::new(deps)));
-    result.insert(strs::keyword_defs(), Value::Array(Rc::new(defs)));
+    result.insert(strs::keyword_deps(), Value::Array(Rc::new(dependencies)));
+    result.insert(strs::keyword_defs(), Value::Array(Rc::new(definitions)));
     Ok(Value::Object(Rc::new(result)))
 }
 

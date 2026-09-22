@@ -32,6 +32,7 @@ pub struct YamlParser<'a> {
     line: u32,
 }
 impl<'a> YamlParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>) -> Self {
         let filename = input.filename().to_owned();
         Self {
@@ -101,20 +102,19 @@ impl<'a> YamlParser<'a> {
             filename: &self.filename,
         };
         let indent = p.lines.first().map_or(0, |x| x.indent);
-        let mut path = Vec::new();
         // A `<<` merge key may stream a leaf that a later explicit key of
         // the same name then overrides - both events stay in `queue`, in
         // order, and the `Default` builder's `set_path` already applies
         // them last-write-wins, so the merged-in leaf doesn't need to be
         // un-streamed or the whole value re-derived to "fix" it.
-        p.node_eager(indent, &mut path, &mut self.queue)?;
+        p.node_eager(indent, &mut self.queue)?;
         if p.pos != p.lines.len() {
             return Err(p.err("unexpected YAML content"));
         }
         Ok(())
     }
 }
-impl<'a> Iterator for YamlParser<'a> {
+impl Iterator for YamlParser<'_> {
     type Item = ParseOutput;
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -134,17 +134,14 @@ impl<'a> Iterator for YamlParser<'a> {
         }
     }
 }
-impl<'a> Parser for YamlParser<'a> {}
+impl Parser for YamlParser<'_> {}
 
 /// Streams a value that `text_value` just resolved in one shot (a scalar,
 /// flow `[]`/`{}`, block scalar, or alias - never something built up
 /// incrementally through `queue`) as a single event, rather than
 /// re-decomposing it leaf-by-leaf through `document::events`.
-fn emit(v: &Value, path: &[PathItem], queue: &mut VecDeque<StreamItem>) {
-    queue.push_back(StreamItem {
-        path: path.to_vec(),
-        value: Some(v.clone()),
-    });
+fn emit(v: &Value, queue: &mut VecDeque<StreamItem>) {
+    queue.push_back(StreamItem::Value(v.clone()));
 }
 
 struct Reader<'a> {
@@ -196,11 +193,11 @@ impl Reader<'_> {
             self.pos += 1;
             let s = l.text[1..].trim();
             if s.is_empty() {
-                a.push(self.child(indent)?)
+                a.push(self.child(indent)?);
             } else if split_colon(s).is_some() {
-                a.push(self.map_first_atomic(indent + 2, s)?)
+                a.push(self.map_first_atomic(indent + 2, s)?);
             } else {
-                a.push(self.text_value(s, indent + 2)?)
+                a.push(self.text_value(s, indent + 2)?);
             }
         }
         Ok(Value::Array(Rc::new(a)))
@@ -236,7 +233,7 @@ impl Reader<'_> {
                 self.text_value(r.trim(), indent + 2)?
             };
             if k.trim() == "<<" {
-                self.merge(&mut m, v)?
+                self.merge(&mut m, v)?;
             } else {
                 m.insert(strs::intern(&key), v);
             }
@@ -257,8 +254,7 @@ impl Reader<'_> {
     }
 
     /// Self-streaming counterpart of `node`: guarantees that, by the time
-    /// it returns `Ok`, every event needed to represent "the value at
-    /// `path`" has already been pushed onto `queue` - a single leaf event
+    /// it returns `Ok`, every event needed to represent "the current value" has already been pushed onto `queue` - a single leaf event
     /// for a scalar, or (via `seq`/`map`) one event per child plus the
     /// container's own close/`Empty*` event. This means a later sibling
     /// (or nested value) failing to parse doesn't discard events for
@@ -266,43 +262,33 @@ impl Reader<'_> {
     fn node_eager(
         &mut self,
         indent: usize,
-        path: &mut Vec<PathItem>,
         queue: &mut VecDeque<StreamItem>,
     ) -> Result<Value, DataError> {
         let Some(l) = self.lines.get(self.pos).cloned() else {
-            emit(&Value::Null, path, queue);
+            emit(&Value::Null, queue);
             return Ok(Value::Null);
         };
         if l.indent < indent {
-            emit(&Value::Null, path, queue);
+            emit(&Value::Null, queue);
             return Ok(Value::Null);
         }
         if l.indent != indent {
             return Err(self.err("inconsistent YAML indentation"));
         }
         if l.text == "-" || l.text.starts_with("- ") {
-            self.seq(indent, path, queue)
+            self.seq(indent, queue)
         } else if split_colon(&l.text).is_some() {
-            self.map(indent, path, queue)
+            self.map(indent, queue)
         } else {
             self.pos += 1;
             let v = self.text_value(&l.text, indent)?;
-            emit(&v, path, queue);
+            emit(&v, queue);
             Ok(v)
         }
     }
-    /// Each item is streamed (recursively, via `child_eager`/`map`, or
-    /// explicitly for a plain scalar) as soon as it's resolved, so items
-    /// before a later parse failure are preserved in `queue`. `path` is a
-    /// scratch stack shared with every caller up the recursion - pushed
-    /// before descending into each item and popped right after, so no
-    /// intermediate path ever needs to be cloned just to pass it down.
-    fn seq(
-        &mut self,
-        indent: usize,
-        path: &mut Vec<PathItem>,
-        queue: &mut VecDeque<StreamItem>,
-    ) -> Result<Value, DataError> {
+    /// Emit each child's Push before descending; Value/Close performs the
+    /// corresponding pop in the builder, so no parser path is needed.
+    fn seq(&mut self, indent: usize, queue: &mut VecDeque<StreamItem>) -> Result<Value, DataError> {
         let mut a = Vec::new();
         let mut i: isize = 0;
         while let Some(l) = self.lines.get(self.pos).cloned() {
@@ -311,42 +297,28 @@ impl Reader<'_> {
             }
             self.pos += 1;
             let s = l.text[1..].trim();
-            path.push(PathItem::new_idx(i));
+            queue.push_back(StreamItem::Push(PathItem::new_idx(i)));
             let v = if s.is_empty() {
-                self.child_eager(indent, path, queue)?
+                self.child_eager(indent, queue)?
             } else if split_colon(s).is_some() {
-                self.map_first(indent + 2, s, path, queue)?
+                self.map_first(indent + 2, s, queue)?
             } else {
                 let v = self.text_value(s, indent + 2)?;
-                emit(&v, path, queue);
+                emit(&v, queue);
                 v
             };
-            path.pop();
             a.push(v);
             i += 1;
         }
-        if a.is_empty() {
-            queue.push_back(StreamItem {
-                path: path.clone(),
-                value: Some(Value::empty_array()),
-            });
+        queue.push_back(if a.is_empty() {
+            StreamItem::Value(Value::empty_array())
         } else {
-            path.push(PathItem::new_idx(i - 1));
-            queue.push_back(StreamItem {
-                path: path.clone(),
-                value: None,
-            });
-            path.pop();
-        }
+            StreamItem::Close
+        });
         Ok(Value::Array(Rc::new(a)))
     }
-    fn map(
-        &mut self,
-        indent: usize,
-        path: &mut Vec<PathItem>,
-        queue: &mut VecDeque<StreamItem>,
-    ) -> Result<Value, DataError> {
-        self.map_first(indent, "", path, queue)
+    fn map(&mut self, indent: usize, queue: &mut VecDeque<StreamItem>) -> Result<Value, DataError> {
+        self.map_first(indent, "", queue)
     }
     /// Each key - explicit or merged via `<<` - is streamed as soon as it's
     /// resolved, in document order. This is simpler than (and, for a `<<`
@@ -360,7 +332,6 @@ impl Reader<'_> {
         &mut self,
         indent: usize,
         first: &str,
-        path: &mut Vec<PathItem>,
         queue: &mut VecDeque<StreamItem>,
     ) -> Result<Value, DataError> {
         let mut m = IndexMap::new();
@@ -394,56 +365,46 @@ impl Reader<'_> {
                 } else {
                     self.text_value(r.trim(), indent + 2)?
                 };
-                self.merge_eager(&mut m, v, path, queue)?;
+                self.merge_eager(&mut m, v, queue)?;
                 continue;
             }
             let key_sym = strs::intern(&key);
-            path.push(PathItem::new_key(key_sym));
+            queue.push_back(StreamItem::Push(PathItem::new_key(key_sym)));
             let v = if r.trim().is_empty() {
-                self.child_eager(indent, path, queue)?
+                self.child_eager(indent, queue)?
             } else {
                 let v = self.text_value(r.trim(), indent + 2)?;
-                emit(&v, path, queue);
+                emit(&v, queue);
                 v
             };
-            path.pop();
             m.insert(key_sym, v);
         }
-        if let Some(&last_key) = m.keys().last() {
-            path.push(PathItem::new_key(last_key));
-            queue.push_back(StreamItem {
-                path: path.clone(),
-                value: None,
-            });
-            path.pop();
+        queue.push_back(if m.is_empty() {
+            StreamItem::Value(Value::empty_object())
         } else {
-            queue.push_back(StreamItem {
-                path: path.clone(),
-                value: Some(Value::empty_object()),
-            });
-        }
+            StreamItem::Close
+        });
         Ok(Value::Object(Rc::new(m)))
     }
     fn child_eager(
         &mut self,
         parent: usize,
-        path: &mut Vec<PathItem>,
         queue: &mut VecDeque<StreamItem>,
     ) -> Result<Value, DataError> {
         let Some(l) = self.lines.get(self.pos) else {
-            emit(&Value::Null, path, queue);
+            emit(&Value::Null, queue);
             return Ok(Value::Null);
         };
         if l.indent < parent {
-            emit(&Value::Null, path, queue);
+            emit(&Value::Null, queue);
             return Ok(Value::Null);
         }
         if l.indent == parent && !(l.text == "-" || l.text.starts_with("- ")) {
-            emit(&Value::Null, path, queue);
+            emit(&Value::Null, queue);
             return Ok(Value::Null);
         }
         let indent = l.indent;
-        self.node_eager(indent, path, queue)
+        self.node_eager(indent, queue)
     }
     fn key(&mut self, s: &str) -> Result<String, DataError> {
         match self.text_value(s.trim(), 0)? {
@@ -491,7 +452,6 @@ impl Reader<'_> {
         &self,
         m: &mut IndexMap<isize, Value>,
         v: Value,
-        path: &mut Vec<PathItem>,
         queue: &mut VecDeque<StreamItem>,
     ) -> Result<(), DataError> {
         for x in self.merge_sources(v)? {
@@ -504,9 +464,8 @@ impl Reader<'_> {
             for (k, v) in x.iter() {
                 if !m.contains_key(k) {
                     m.insert(*k, v.clone());
-                    path.push(PathItem::new_key(*k));
-                    emit(v, path, queue);
-                    path.pop();
+                    queue.push_back(StreamItem::Push(PathItem::new_key(*k)));
+                    emit(v, queue);
                 }
             }
         }
@@ -571,11 +530,11 @@ impl Reader<'_> {
                 break;
             }
             self.pos += 1;
-            a.push(x.text)
+            a.push(x.text);
         }
         let mut s = if fold { a.join(" ") } else { a.join("\n") };
         if !fold && !strip {
-            s.push('\n')
+            s.push('\n');
         }
         Ok(Value::String(s.into()))
     }
@@ -597,14 +556,14 @@ struct Flow<'a, 'r, 'f> {
     pos: usize,
     reader: &'r mut Reader<'f>,
 }
-impl<'a, 'r, 'f> Flow<'a, 'r, 'f> {
+impl Flow<'_, '_, '_> {
     fn ws(&mut self) {
         while self.s[self.pos..]
             .chars()
             .next()
-            .is_some_and(|c| c.is_whitespace())
+            .is_some_and(char::is_whitespace)
         {
-            self.pos += 1
+            self.pos += 1;
         }
     }
     fn value(&mut self) -> Result<Value, DataError> {
@@ -619,7 +578,7 @@ impl<'a, 'r, 'f> Flow<'a, 'r, 'f> {
                     if ",]}:".contains(c) {
                         break;
                     }
-                    self.pos += c.len_utf8()
+                    self.pos += c.len_utf8();
                 }
                 let t = self.s[st..self.pos].trim();
                 if let Some(n) = t.strip_prefix('*') {
@@ -659,9 +618,9 @@ impl<'a, 'r, 'f> Flow<'a, 'r, 'f> {
                     '"' => '"',
                     '\\' => '\\',
                     x => x,
-                })
+                });
             } else {
-                o.push(c)
+                o.push(c);
             }
         }
         Err(self.reader.err("unterminated YAML string"))
@@ -678,7 +637,7 @@ impl<'a, 'r, 'f> Flow<'a, 'r, 'f> {
             a.push(self.value()?);
             self.ws();
             if self.s.as_bytes().get(self.pos) == Some(&b',') {
-                self.pos += 1
+                self.pos += 1;
             } else if self.s.as_bytes().get(self.pos) != Some(&b']') {
                 return Err(self.reader.err("expected ',' or ']'"));
             }
@@ -710,13 +669,13 @@ impl<'a, 'r, 'f> Flow<'a, 'r, 'f> {
                 _ => return Err(self.reader.err("flow key must be scalar")),
             };
             if merge_key && k == "<<" {
-                self.reader.merge(&mut m, v)?
+                self.reader.merge(&mut m, v)?;
             } else {
                 m.insert(strs::intern(&k), v);
             }
             self.ws();
             if self.s.as_bytes().get(self.pos) == Some(&b',') {
-                self.pos += 1
+                self.pos += 1;
             } else if self.s.as_bytes().get(self.pos) != Some(&b'}') {
                 return Err(self.reader.err("expected ',' or '}'"));
             }
@@ -788,9 +747,9 @@ fn strip_comment(s: &str) -> String {
     for (i, c) in s.char_indices() {
         if c == '\'' || c == '"' {
             if q == Some(c) {
-                q = None
+                q = None;
             } else if q.is_none() {
-                q = Some(c)
+                q = Some(c);
             }
         } else if c == '#' && q.is_none() && (i == 0 || s.as_bytes()[i - 1].is_ascii_whitespace()) {
             return s[..i].trim_end().into();
@@ -804,15 +763,15 @@ fn split_colon(s: &str) -> Option<(&str, &str)> {
     for (i, c) in s.char_indices() {
         if c == '\'' || c == '"' {
             if q == Some(c) {
-                q = None
+                q = None;
             } else if q.is_none() {
-                q = Some(c)
+                q = Some(c);
             }
         } else if q.is_none() {
             if "[{".contains(c) {
-                d += 1
+                d += 1;
             } else if "]}".contains(c) {
-                d -= 1
+                d -= 1;
             } else if c == ':'
                 && d == 0
                 && (i + 1 == s.len() || s[i + 1..].starts_with([' ', '\t']))
@@ -830,12 +789,18 @@ pub struct YamlSerializer {
     emitted: bool,
 }
 impl YamlSerializer {
-    pub fn new(output: Output, options: render::Options) -> Self {
+    #[must_use]
+    pub const fn new(output: Output, options: render::Options) -> Self {
         Self {
             output,
             options,
             emitted: false,
         }
+    }
+}
+impl YamlSerializer {
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 fn block(v: &Value) -> bool {
@@ -858,13 +823,13 @@ fn yaml_plain_safe(s: &str) -> bool {
     ]) {
         return false;
     }
-    if s.chars().any(|c| c.is_control()) {
+    if s.chars().any(char::is_control) {
         return false;
     }
     if s.contains(": ") || s.ends_with(':') || s.contains(" #") {
         return false;
     }
-    matches!(scalar(s, false), Value::String(x) if &*x == s)
+    matches!(scalar(s, false), Value::String(x) if *x == s)
 }
 fn write_string_themed(o: &mut String, s: &str, x: &render::Options, idx: render::ThemeIdx) {
     if yaml_plain_safe(s) {
@@ -916,7 +881,14 @@ fn yaml_block_scalar(s: &str) -> Option<(&'static str, Vec<&str>)> {
 /// Writes `v` as an inline scalar value (preceded by `' '` if `lead_space`)
 /// followed by `'\n'`, using a literal block scalar instead of a quoted
 /// string when `yaml_block_scalar` says it's safe to round-trip.
-fn write_scalar_value(o: &mut String, v: &Value, x: &render::Options, d: usize, i: &str, lead_space: bool) {
+fn write_scalar_value(
+    o: &mut String,
+    v: &Value,
+    x: &render::Options,
+    d: usize,
+    i: &str,
+    lead_space: bool,
+) {
     if let Value::String(s) = v
         && x.out.compact_level == render::CompactLevel::Pretty
         && let Some((header, lines)) = yaml_block_scalar(s)
@@ -975,7 +947,7 @@ fn write_block(o: &mut String, v: &Value, x: &render::Options, d: usize) {
                 o.push(':');
                 if block(z) {
                     o.push('\n');
-                    write_block(o, z, x, d + 1)
+                    write_block(o, z, x, d + 1);
                 } else {
                     write_scalar_value(o, z, x, d, i, true);
                 }
@@ -995,12 +967,12 @@ impl Serializer for YamlSerializer {
         let mut o = String::new();
         if self.emitted {
             if self.options.out.compact_level == render::CompactLevel::Pretty {
-                o.push_str("\n---\n\n")
+                o.push_str("\n---\n\n");
             } else {
-                o.push_str("---\n")
+                o.push_str("---\n");
             }
         } else if let Some(s) = self.options.out.doc_begin {
-            o.push_str(s)
+            o.push_str(s);
         }
         self.emitted = true;
         if self.options.out.compact_level == render::CompactLevel::Pretty {
@@ -1013,14 +985,14 @@ impl Serializer for YamlSerializer {
                 &self.options,
                 0,
                 super::json::KeywordPreset::YAML,
-            )
+            );
         }
         o.push_str(self.options.out.doc_end.unwrap_or("\n"));
         self.output
             .write_all(o.as_bytes())
             .map_err(DataError::IOError)?;
         if self.options.out.doc_end_flush {
-            self.output.flush().map_err(DataError::IOError)?
+            self.output.flush().map_err(DataError::IOError)?;
         }
         Ok(())
     }

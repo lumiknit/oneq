@@ -10,13 +10,14 @@ use crate::render;
 
 const BUF_SIZE: usize = 8192;
 
-/// RawParser is takes string and split it into each line.
+/// `RawParser` is takes string and split it into each line.
 /// Each value is a line with only its final LF removed; CR is data.
 pub struct RawParser<'a> {
     input: BufReader<Input<'a>>,
 }
 
 impl<'a> RawParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>) -> Self {
         RawParser {
             input: BufReader::with_capacity(BUF_SIZE, input),
@@ -24,7 +25,7 @@ impl<'a> RawParser<'a> {
     }
 }
 
-impl<'a> RawParser<'a> {
+impl RawParser<'_> {
     fn read_line(&mut self) -> Result<Option<String>, DataError> {
         let mut line = String::new();
         self.input
@@ -34,31 +35,28 @@ impl<'a> RawParser<'a> {
             return Ok(None);
         }
 
-        if line.ends_with("\n") {
+        if line.ends_with('\n') {
             line.pop();
         }
         Ok(Some(line))
     }
 }
 
-impl<'a> Iterator for RawParser<'a> {
+impl Iterator for RawParser<'_> {
     type Item = ParseOutput;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.read_line() {
-            Ok(Some(s)) => Some(Ok(StreamItem {
-                path: Vec::new(),
-                value: Some(Value::String(s.into())),
-            })),
+            Ok(Some(s)) => Some(Ok(StreamItem::Value(Value::String(s.into())))),
             Ok(None) => None,
             Err(e) => Some(Err(e)),
         }
     }
 }
 
-impl<'a> super::Parser for RawParser<'a> {}
+impl super::Parser for RawParser<'_> {}
 
-/// RawSlurpParser is takes string and split it into each line.
+/// `RawSlurpParser` is takes string and split it into each line.
 /// Each value is a line with only its final LF removed; CR is data.
 pub struct RawSlurpParser<'a> {
     input: BufReader<Input<'a>>,
@@ -66,6 +64,7 @@ pub struct RawSlurpParser<'a> {
 }
 
 impl<'a> RawSlurpParser<'a> {
+    #[must_use]
     pub fn new(input: Input<'a>) -> Self {
         RawSlurpParser {
             input: BufReader::with_capacity(BUF_SIZE, input),
@@ -74,7 +73,7 @@ impl<'a> RawSlurpParser<'a> {
     }
 }
 
-impl<'a> Iterator for RawSlurpParser<'a> {
+impl Iterator for RawSlurpParser<'_> {
     type Item = ParseOutput;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -86,17 +85,14 @@ impl<'a> Iterator for RawSlurpParser<'a> {
             if let Err(error) = self.input.read_to_string(&mut content) {
                 return Some(Err(DataError::IOError(error)));
             }
-            Some(Ok(StreamItem {
-                path: Vec::new(),
-                value: Some(Value::String(content.into())),
-            }))
+            Some(Ok(StreamItem::Value(Value::String(content.into()))))
         }
     }
 }
 
-impl<'a> super::Parser for RawSlurpParser<'a> {}
+impl super::Parser for RawSlurpParser<'_> {}
 
-/// RawSerializer implements jq's `-r`/`--raw-output`/`--join-output`: a
+/// `RawSerializer` implements jq's `-r`/`--raw-output`/`--join-output`: a
 /// string prints unquoted, but every other type still prints as JSON
 /// (honoring the usual compact/indent/color/sort-keys render options) rather
 /// than erroring.
@@ -106,18 +102,22 @@ pub struct RawSerializer {
 }
 
 impl RawSerializer {
-    pub fn new(output: Output, render_options: render::Options) -> Self {
+    #[must_use]
+    pub const fn new(output: Output, render_options: render::Options) -> Self {
         Self {
             output,
             render_options,
         }
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 
 impl super::Serializer for RawSerializer {
     fn put(&mut self, value: Value) -> Result<(), DataError> {
         if let Some(s) = self.render_options.out.doc_begin {
-            write!(self.output, "{}", s).map_err(DataError::IOError)?;
+            write!(self.output, "{s}").map_err(DataError::IOError)?;
         }
 
         match &value {
@@ -138,7 +138,7 @@ impl super::Serializer for RawSerializer {
         }
 
         if let Some(s) = self.render_options.out.doc_end {
-            write!(self.output, "{}", s).map_err(DataError::IOError)?;
+            write!(self.output, "{s}").map_err(DataError::IOError)?;
         } else {
             writeln!(self.output).map_err(DataError::IOError)?;
         }

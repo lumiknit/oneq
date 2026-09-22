@@ -18,7 +18,7 @@ pub(super) enum RunInputSource {
 }
 
 #[derive(Clone)]
-pub(crate) struct RunOption {
+pub struct RunOption {
     pub dump_ir: bool,
     pub from_fmt: DataFormat,
     pub to_fmt: DataFormat,
@@ -35,6 +35,8 @@ pub(crate) struct RunOption {
     pub globals: HashMap<String, Value>,
     pub null_input: bool,
     pub exit_status: bool,
+    pub in_place: bool,
+    pub files: Vec<String>,
     source: RunInputSource,
 }
 
@@ -46,14 +48,14 @@ impl RunOption {
             .as_deref()
             .map(DataFormat::from_str)
             .transpose()
-            .map_err(|_| anyhow::anyhow!("unknown input format"))?
+            .map_err(|()| anyhow::anyhow!("unknown input format"))?
             .unwrap_or_default();
         let mut to_format = args
             .out_fmt
             .as_deref()
             .map(DataFormat::from_str)
             .transpose()
-            .map_err(|_| anyhow::anyhow!("unknown output format"))?
+            .map_err(|()| anyhow::anyhow!("unknown output format"))?
             .unwrap_or_default();
 
         let mut slurp = args.slurp;
@@ -88,7 +90,7 @@ impl RunOption {
 
         // Render options
         let mut render_options = render::Options::new(args.build_output_style());
-        if args.color_output() {
+        if args.color_output_for(args.in_place) {
             render_options.with_theme(render::ColorTheme::default());
         }
 
@@ -116,7 +118,7 @@ impl RunOption {
             }
             files.extend(args.rest.clone());
         } else {
-            filter = args.filter.clone().unwrap_or(".".to_string());
+            filter = args.filter.clone().unwrap_or_else(|| ".".to_string());
             files = args.rest.clone();
         }
 
@@ -161,6 +163,8 @@ impl RunOption {
             globals,
             null_input: args.null_input,
             exit_status: args.exit_status,
+            in_place: args.in_place,
+            files: files.clone(),
             source,
         })
     }
@@ -168,24 +172,34 @@ impl RunOption {
     pub fn build_parser(
         &self,
     ) -> anyhow::Result<(data::AnyParser<'static>, io::SharedInputTracker)> {
+        self.build_parser_for(&self.source)
+    }
+
+    pub(super) fn build_parser_for(
+        &self,
+        source: &RunInputSource,
+    ) -> anyhow::Result<(data::AnyParser<'static>, io::SharedInputTracker)> {
         let tracker = io::InputTracker::shared();
-        let i = match &self.source {
+        let i = match source {
             RunInputSource::Stdin => Input::new_stdin_with_tracker(tracker.clone()),
             RunInputSource::Files(files) => {
-                let refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+                let refs: Vec<&str> = files.iter().map(std::string::String::as_str).collect();
                 Input::new_files_with_tracker(refs.as_slice(), tracker.clone())?
             }
             RunInputSource::String(s) => Input::new_string_with_tracker(s.clone(), tracker.clone()),
             RunInputSource::Bytes(s) => Input::new_bytes_with_tracker(s.clone(), tracker.clone()),
         };
         let parser = data::AnyParser::new(self.from_fmt, i)
-            .map_err(|e| anyhow::anyhow!("Failed to create parser: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create parser: {e}"))?;
         Ok((parser, tracker))
     }
 
-    pub fn build_serializer(&self) -> anyhow::Result<data::AnySerializer> {
-        data::AnySerializer::from_format(self.to_fmt, Output::Stdout, self.render_options.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to create serializer: {}", e))
+    pub fn build_serializer_with_output(
+        &self,
+        output: Output,
+    ) -> anyhow::Result<data::AnySerializer> {
+        data::AnySerializer::from_format(self.to_fmt, output, self.render_options.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to create serializer: {e}"))
     }
 }
 

@@ -15,7 +15,7 @@ fn main() {
 
     match args.cmd {
         Some(flags::Commands::BuildConfiguration) => {
-            println!("{}", BuildConfig);
+            println!("{BuildConfig}");
             std::process::exit(0);
         }
         #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

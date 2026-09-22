@@ -1,6 +1,6 @@
 //! jq source as a data format. A document is one JSON-compatible Pair tree.
 use crate::{
-    data::{ArrayIndex, DataError, ParseOutput, Parser, PathItem, Serializer, StreamItem, Value},
+    data::{DataError, ParseOutput, Parser, Serializer, Value},
     io::{Input, Output},
     jq::parser::{
         pair::{Pair, pairs_to_value},
@@ -35,9 +35,13 @@ impl JqParser {
             });
         let mut values = VecDeque::new();
         match value {
-            Ok(value) => flatten(value, Vec::new(), &mut values),
+            Ok(value) => {
+                let mut events = VecDeque::new();
+                super::document::events(value, &mut events);
+                values.extend(events.into_iter().map(Ok));
+            }
             Err(e) => values.push_back(Err(e)),
-        };
+        }
         Self { values }
     }
 }
@@ -54,8 +58,12 @@ pub struct JqSerializer {
     options: render::Options,
 }
 impl JqSerializer {
-    pub fn new(output: Output, options: render::Options) -> Self {
+    #[must_use]
+    pub const fn new(output: Output, options: render::Options) -> Self {
         Self { output, options }
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 impl Serializer for JqSerializer {
@@ -90,71 +98,5 @@ impl Serializer for JqSerializer {
         self.output
             .write_all(text.as_bytes())
             .map_err(DataError::IOError)
-    }
-}
-
-fn flatten(value: Value, path: Vec<PathItem>, out: &mut VecDeque<ParseOutput>) {
-    match value {
-        Value::Null => out.push_back(Ok(StreamItem {
-            path,
-            value: Some(Value::Null),
-        })),
-        Value::Bool(x) => out.push_back(Ok(StreamItem {
-            path,
-            value: Some(Value::Bool(x)),
-        })),
-        Value::Decimal(x) => out.push_back(Ok(StreamItem {
-            path,
-            value: Some(Value::Decimal(x)),
-        })),
-        Value::Float(x) => out.push_back(Ok(StreamItem {
-            path,
-            value: Some(Value::Float(x)),
-        })),
-        Value::String(x) => out.push_back(Ok(StreamItem {
-            path,
-            value: Some(Value::String(x)),
-        })),
-        Value::Array(xs) => {
-            if xs.is_empty() {
-                out.push_back(Ok(StreamItem {
-                    path,
-                    value: Some(Value::empty_array()),
-                }))
-            } else {
-                for (i, x) in xs.iter().cloned().enumerate() {
-                    let mut p = path.clone();
-                    p.push(PathItem::new_idx(i as ArrayIndex));
-                    flatten(x, p, out)
-                }
-                let mut last = path.clone();
-                last.push(PathItem::new_idx((xs.len() - 1) as ArrayIndex));
-                out.push_back(Ok(StreamItem {
-                    path: last,
-                    value: None,
-                }));
-            }
-        }
-        Value::Object(xs) => {
-            if xs.is_empty() {
-                out.push_back(Ok(StreamItem {
-                    path,
-                    value: Some(Value::empty_object()),
-                }))
-            } else {
-                for (k, x) in xs.iter() {
-                    let mut p = path.clone();
-                    p.push(PathItem::new_key(*k));
-                    flatten(x.clone(), p, out)
-                }
-                let (key, _) = xs.last().unwrap();
-                let mut last = path.clone();
-                last.push(PathItem::new_key(*key));
-                out.push_back(Ok(StreamItem {
-                    path: last,
-                    value: None,
-                }));
-            }
-        }
     }
 }

@@ -20,7 +20,7 @@ impl<T, const N: usize> Node<T, N> {
 }
 
 #[derive(Debug)]
-pub(crate) struct Stack<T, const N: usize = 8> {
+pub struct Stack<T, const N: usize = 8> {
     head: Option<Rc<Node<T, N>>>,
     used: usize,
     len: usize,
@@ -51,7 +51,7 @@ impl<T, const N: usize> Clone for Stack<T, N> {
 }
 
 impl<T, const N: usize> Stack<T, N> {
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
@@ -74,15 +74,15 @@ impl<T, const N: usize> Stack<T, N> {
         const {
             assert!(N > 0);
         }
-        if self.used < N {
-            if let Some(node) = self.head.as_mut().and_then(Rc::get_mut) {
-                node.truncate(self.used);
-                node.values[self.used] = Some(value);
-                node.filled += 1;
-                self.used += 1;
-                self.len += 1;
-                return;
-            }
+        if self.used < N
+            && let Some(node) = self.head.as_mut().and_then(Rc::get_mut)
+        {
+            node.truncate(self.used);
+            node.values[self.used] = Some(value);
+            node.filled += 1;
+            self.used += 1;
+            self.len += 1;
+            return;
         }
         let previous = if self.len == 0 {
             Self::default()

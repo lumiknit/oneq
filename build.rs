@@ -31,9 +31,9 @@ fn main() {
     let debug = std::env::var("DEBUG").unwrap();
     let profile = std::env::var("PROFILE").unwrap();
 
-    println!("cargo:rustc-env=BUILD_OPT_LEVEL={}", opt_level);
-    println!("cargo:rustc-env=BUILD_DEBUG={}", debug);
-    println!("cargo:rustc-env=BUILD_PROFILE={}", profile);
+    println!("cargo:rustc-env=BUILD_OPT_LEVEL={opt_level}");
+    println!("cargo:rustc-env=BUILD_DEBUG={debug}");
+    println!("cargo:rustc-env=BUILD_PROFILE={profile}");
 
     compress_asset(out_dir, "src/doc/doc.json", "doc.json.zz");
 }

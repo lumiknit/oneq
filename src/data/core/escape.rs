@@ -64,14 +64,14 @@ pub fn escape_string_json_ascii<W: fmt::Write>(
                 let n = c as u32;
 
                 if n <= 0xFFFF {
-                    write!(out, r"\u{:04x}", n)?;
+                    write!(out, r"\u{n:04x}")?;
                 } else {
                     // Encode as UTF-16 surrogate pair.
                     let n = n - 0x10000;
                     let hi = 0xD800 + ((n >> 10) & 0x3FF);
                     let lo = 0xDC00 + (n & 0x3FF);
 
-                    write!(out, r"\u{:04x}\u{:04x}", hi, lo)?;
+                    write!(out, r"\u{hi:04x}\u{lo:04x}")?;
                 }
             }
         }
@@ -288,7 +288,7 @@ pub fn unescape_string_csv<W: fmt::Write>(input: &str, quote: char, out: &mut W)
     Ok(())
 }
 
-fn read_hex<'a>(chars: &mut std::iter::Peekable<Chars<'a>>, n: usize) -> Option<u32> {
+fn read_hex(chars: &mut std::iter::Peekable<Chars<'_>>, n: usize) -> Option<u32> {
     let mut value = 0u32;
 
     for _ in 0..n {
@@ -300,9 +300,9 @@ fn read_hex<'a>(chars: &mut std::iter::Peekable<Chars<'a>>, n: usize) -> Option<
     Some(value)
 }
 
-fn decode_unicode_escape<'a, W: fmt::Write>(
+fn decode_unicode_escape<W: fmt::Write>(
     value: u32,
-    chars: &mut std::iter::Peekable<Chars<'a>>,
+    chars: &mut std::iter::Peekable<Chars<'_>>,
     out: &mut W,
 ) -> fmt::Result {
     let mut clone = chars.clone();

@@ -4,7 +4,7 @@
 //! consulting its external source span. Content belongs to the node itself:
 //! Invoke stores its callee/operator, and named declarations store their name.
 //! Comments are leaf trivia interleaved with children, never semantic operands.
-//! All slot counts and indexes below exclude Comment and TrailingComment.
+//! All slot counts and indexes below exclude Comment and `TrailingComment`.
 //!
 //! Normalization is operator-specific: singleton pipe/comma containers may be
 //! collapsed and adjacent pipes/commas may be flattened where scope and evaluation
@@ -14,7 +14,7 @@
 //! Optional boundaries must survive normalization and path coalescing.
 //!
 //! Pest conversion, AST lowering, JSON serialization, and printing share these
-//! contracts. JSON contains content text and never requires the original FileSet.
+//! contracts. JSON contains content text and never requires the original `FileSet`.
 use super::Rule;
 use crate::{data::Value, strs};
 use pest::iterators::Pair as PestPair;
@@ -50,12 +50,12 @@ use strum::Display;
 
 #[derive(Debug, Display, Clone, PartialEq, Eq)]
 pub enum PairTag {
-    /// Comment(TEXT_WITHOUT_INITIAL_HASH)[]; no wrapped expression.
+    /// `Comment(TEXT_WITHOUT_INITIAL_HASH)`[]; no wrapped expression.
     /// Preserve the remaining spelling, including backslash-newline continuation.
     /// The printer restores the initial '#' and a terminating newline as needed.
     Comment,
 
-    /// TrailingComment(TEXT_WITHOUT_INITIAL_HASH)[]; code precedes it on its line.
+    /// `TrailingComment(TEXT_WITHOUT_INITIAL_HASH)`[]; code precedes it on its line.
     /// Same content and childless contract as Comment.
     TrailingComment,
 
@@ -63,24 +63,24 @@ pub enum PairTag {
     /// and a value parameter in Def. The '$' prefix is reconstructed, not content.
     Var,
 
-    /// Loc[FILE: StringChunk, LINE: Int]; `$__loc__` resolved at its original site.
+    /// Loc[FILE: `StringChunk`, LINE: Int]; `$__loc__` resolved at its original site.
     /// FILE contains the filename encoded as a jq string chunk; LINE is one-based.
     /// Both children survive JSON export even when all external spans are omitted.
     /// Lower to {"file": FILE, "line": LINE}. To preserve semantics after moving or
     /// formatting source, print this explicit object rather than a relocated $__loc__.
     Loc,
 
-    /// Int(NUM_REPR)[]; preserve the original numeric spelling.
+    /// `Int(NUM_REPR)`[]; preserve the original numeric spelling.
     Int,
 
-    /// Float(NUM_REPR)[]; preserve the original numeric spelling.
+    /// `Float(NUM_REPR)`[]; preserve the original numeric spelling.
     Float,
 
     /// StringChunk(CONTENT)[]; preserve raw string spelling, including escapes.
     /// Normally occurs inside String; Loc also uses it for its stored filename.
     StringChunk,
 
-    /// String[ITEM...: StringChunk | Expr]; semantic non-StringChunk children are
+    /// String[ITEM...: `StringChunk` | Expr]; semantic non-StringChunk children are
     /// interpolation expressions. Trivia is never an interpolation by itself.
     /// `"hello \(.name)"` => String[StringChunk("hello "), Path[`"name"`]].
     /// Comments inside an interpolation belong to that expression's container;
@@ -134,8 +134,8 @@ pub enum PairTag {
     Break,
 
     /// Invoke(NAME)[ARG...: Expr]; NAME is the complete callee or operator spelling.
-    /// No Ident, Special, Format, or ModuleAccess child is needed.
-    /// `true` => Invoke("true")[]; `m::f(1)` => Invoke("m::f")[`1`].
+    /// No Ident, Special, Format, or `ModuleAccess` child is needed.
+    /// `true` => Invoke("true")[]; `m::f(1)` => `Invoke("m::f`")[`1`].
     /// `@base64d` => Invoke("@base64d")[]; `@uri "hi \(.x)"` =>
     /// Invoke("@uri")[String[StringChunk("hi "), `.x`]]. With a String argument,
     /// format only interpolated values; this is not a call on the whole string.
@@ -152,20 +152,20 @@ pub enum PairTag {
 
     /// Assign(OP)[LHS: Expr, RHS: Expr]; OP is =, |=, +=, -=, *=, /=, %=, or //=.
     /// LHS must select paths in the input at evaluation time; it is not a variable
-    /// destructuring Pattern and is not restricted to the PairTag::Path shape.
+    /// destructuring Pattern and is not restricted to the `PairTag::Path` shape.
     /// `(.a, .b) = 0` => Assign("=")[Invoke(",")[`.a`, `.b`], `0`].
     /// '=' evaluates RHS on the original input; '|=' evaluates it on selected values.
-    /// Reference: https://jqlang.org/manual/v1.8/#assignment
+    /// Reference: <https://jqlang.org/manual/v1.8/#assignment>
     Assign,
 
     /// Bind[TARGET: Expr, BODY: Expr, PATTERNS: Pattern...]; content is always None.
     /// A plain variable is an ordinary Var child; ?// alternatives follow sequentially. Never store `as`.
     Bind,
 
-    /// Reduce and ForEach append alternative patterns directly; there is no PatternAlt node.
+    /// Reduce and `ForEach` append alternative patterns directly; there is no `PatternAlt` node.
 
     /// Reduce[EXPR, INIT, UPDATE, PATTERN...]; content is always None.
-    /// ForEach[EXPR, INIT, UPDATE, EXTRACT, PATTERN...]; EXTRACT is always present.
+    /// `ForEach`[EXPR, INIT, UPDATE, EXTRACT, PATTERN...]; EXTRACT is always present.
     /// An omitted source EXTRACT becomes identity Path[]. Patterns start at index 4.
     /// `?//` alternatives are appended in source order after the accumulator slots.
     Reduce,
@@ -225,8 +225,8 @@ pub struct Pair {
     pub tag: PairTag,
 
     /// Children in source order, including leaf trivia. Semantic slot access
-    /// excludes Comment and TrailingComment; JSON retains their ordering.
-    pub children: Vec<Pair>,
+    /// excludes Comment and `TrailingComment`; JSON retains their ordering.
+    pub children: Vec<Self>,
 
     /// The external span of this pair. The start and end are byte offsets
     /// which wraps the source text of this pair. This information may be omitted
@@ -243,6 +243,7 @@ pub struct Pair {
 }
 pub type Pairs = Vec<Pair>;
 /// Precedence used when rendering or lowering operator pairs. Larger binds tighter.
+#[must_use]
 pub fn operator_precedence(op: &str) -> u8 {
     match op {
         "|" => 1,
@@ -258,7 +259,7 @@ pub fn operator_precedence(op: &str) -> u8 {
     }
 }
 impl Pair {
-    pub fn new(tag: PairTag, content: impl Into<String>, children: Vec<Pair>) -> Self {
+    pub fn new(tag: PairTag, content: impl Into<String>, children: Vec<Self>) -> Self {
         Self {
             tag,
             children,
@@ -266,7 +267,8 @@ impl Pair {
             content_span: Some(ContentSpan::Str(content.into())),
         }
     }
-    pub fn node(tag: PairTag, children: Vec<Pair>) -> Self {
+    #[must_use]
+    pub const fn node(tag: PairTag, children: Vec<Self>) -> Self {
         Self {
             tag,
             children,
@@ -274,13 +276,14 @@ impl Pair {
             content_span: None,
         }
     }
-    pub fn is_comment(&self) -> bool {
+    #[must_use]
+    pub const fn is_comment(&self) -> bool {
         matches!(self.tag, PairTag::Comment | PairTag::TrailingComment)
     }
     /// Scopes a postfix `?` to just the last `n` path components of `base`,
     /// leaving any earlier coalesced components unprotected: `.a.b?` must
     /// still raise if `.a` errors, matching jq's per-step optional semantics.
-    fn wrap_optional(mut base: Pair, n: usize) -> Pair {
+    fn wrap_optional(mut base: Self, n: usize) -> Self {
         if n == 0 {
             return Self::new(PairTag::Invoke, "?", vec![base]);
         }
@@ -311,18 +314,22 @@ impl Pair {
             Self::new(PairTag::Invoke, ".", vec![prefix, optional])
         }
     }
-    pub fn semantic_children(&self) -> impl DoubleEndedIterator<Item = &Pair> {
+    #[must_use]
+    pub fn semantic_children(&self) -> impl DoubleEndedIterator<Item = &Self> {
         self.children.iter().filter(|p| !p.is_comment())
     }
+    #[must_use]
     pub fn text<'a>(&'a self, files: &'a FileSet) -> Option<&'a str> {
         match self.content_span.as_ref()? {
             ContentSpan::Str(s) => Some(s),
             ContentSpan::Pos(s) => files.text(s),
         }
     }
+    #[must_use]
     pub fn source<'a>(&self, files: &'a FileSet) -> Option<&'a str> {
         files.text(self.span.as_ref()?)
     }
+    #[must_use]
     pub fn string(s: &str) -> Self {
         let mut escaped = String::new();
         crate::data::escape::escape_string_json(s, '"', &mut escaped).unwrap();
@@ -331,6 +338,7 @@ impl Pair {
             vec![Self::new(PairTag::StringChunk, escaped, vec![])],
         )
     }
+    #[must_use]
     pub fn normalize(mut self, files: &FileSet) -> Self {
         self.children = self
             .children
@@ -339,7 +347,7 @@ impl Pair {
             .collect();
         if self.tag == PairTag::Root {
             // Keep comments attached while ordering JSON-supplied declarations.
-            let mut groups: Vec<Vec<Pair>> = vec![];
+            let mut groups: Vec<Vec<Self>> = vec![];
             let mut leading = vec![];
             for child in self.children {
                 if child.is_comment() {
@@ -409,8 +417,8 @@ impl Pair {
 
     fn from_pest_parts(
         p: PestPair<'_, Rule>,
-        mut parts: Vec<(Rule, Pair)>,
-        files: &mut FileSet,
+        mut parts: Vec<(Rule, Self)>,
+        files: &FileSet,
         file: usize,
     ) -> Self {
         use PairTag as T;
@@ -445,7 +453,7 @@ impl Pair {
             )
         });
         let rules: Vec<Rule> = parts.iter().map(|(r, _)| *r).collect();
-        let mut xs: Vec<Pair> = parts.into_iter().map(|(_, p)| p).collect();
+        let mut xs: Vec<Self> = parts.into_iter().map(|(_, p)| p).collect();
         let leaf = |tag, skip| Self {
             tag,
             children: vec![],
@@ -455,7 +463,7 @@ impl Pair {
                 ..pos.clone()
             })),
         };
-        let take = |xs: &mut Vec<Pair>| {
+        let take = |xs: &mut Vec<Self>| {
             let i = xs
                 .iter()
                 .position(|p| !p.is_comment())
@@ -496,7 +504,23 @@ impl Pair {
             | Rule::add_op
             | Rule::mul_op
             | Rule::and_kw
-            | Rule::or_kw => leaf(T::Invoke, 0),
+            | Rule::or_kw
+            | Rule::as_kw
+            | Rule::def_kw
+            | Rule::if_kw
+            | Rule::then_kw
+            | Rule::elif_kw
+            | Rule::else_kw
+            | Rule::end_kw
+            | Rule::reduce_kw
+            | Rule::foreach_kw
+            | Rule::try_kw
+            | Rule::catch_kw
+            | Rule::break_kw
+            | Rule::label_kw
+            | Rule::module_kw
+            | Rule::include_kw
+            | Rule::import_kw => leaf(T::Invoke, 0),
             Rule::var if raw == "$__loc__" => {
                 let filename = Self::string(&files.files[file].path).children.remove(0);
                 let line = span.get_input()[..span.start()]
@@ -518,7 +542,7 @@ impl Pair {
             Rule::string_char => leaf(T::StringChunk, 0),
             Rule::identity => Self::node(T::Path, vec![]),
             Rule::string => {
-                let mut chunks: Vec<Pair> = vec![];
+                let mut chunks: Vec<Self> = vec![];
                 for x in xs {
                     if x.tag == T::StringChunk
                         && chunks.last().is_some_and(|p| p.tag == T::StringChunk)
@@ -656,7 +680,7 @@ impl Pair {
                     }
                 };
                 lhs.children.splice(0..0, leading);
-                let mut pending: Option<Pair> = None;
+                let mut pending: Option<Self> = None;
                 for (r, child) in iter {
                     if child.is_comment() {
                         lhs.children.push(child);
@@ -848,27 +872,12 @@ impl Pair {
             | Rule::slice_to
             | Rule::interpolation
             | Rule::paren => unwrap(xs),
-            Rule::as_kw
-            | Rule::def_kw
-            | Rule::if_kw
-            | Rule::then_kw
-            | Rule::elif_kw
-            | Rule::else_kw
-            | Rule::end_kw
-            | Rule::reduce_kw
-            | Rule::foreach_kw
-            | Rule::try_kw
-            | Rule::catch_kw
-            | Rule::break_kw
-            | Rule::label_kw
-            | Rule::module_kw
-            | Rule::include_kw
-            | Rule::import_kw => leaf(T::Invoke, 0),
             _ => unreachable!("non-tree Pest rule: {rule:?}"),
         };
         result.span = Some(pos);
         result
     }
+    #[must_use]
     pub fn to_value(&self, files: &FileSet) -> Value {
         let mut o = indexmap::IndexMap::new();
         o.insert(
@@ -939,7 +948,11 @@ fn reorder_fold(tag: PairTag, xs: Vec<Pair>) -> Pair {
 }
 impl PairTag {
     pub fn from_name(name: &str) -> Result<Self, String> {
-        use PairTag::*;
+        use PairTag::{
+            Array, Assign, Bind, Break, Comment, Def, Empty, Float, ForEach, If, Import, Include,
+            Int, Invoke, Label, Loc, Module, Object, Path, Reduce, Root, Slice, Spread, String,
+            StringChunk, TrailingComment, Var,
+        };
         Ok(match name {
             "Comment" => Comment,
             "TrailingComment" => TrailingComment,
@@ -972,6 +985,7 @@ impl PairTag {
         })
     }
 }
+#[must_use]
 pub fn pairs_to_value(pairs: &[Pair], files: &FileSet) -> Value {
     Value::Array(std::rc::Rc::new(
         pairs.iter().map(|p| p.to_value(files)).collect(),
@@ -996,9 +1010,11 @@ pub struct Location {
     pub column: usize,
 }
 impl FileSet {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
+    #[must_use]
     pub fn text(&self, span: &SpanPos) -> Option<&str> {
         let f = self.files.get(span.file)?;
         f.source
@@ -1025,6 +1041,7 @@ impl FileSet {
         });
         self.files.len() - 1
     }
+    #[must_use]
     pub fn locate(&self, offset: usize) -> Option<Location> {
         let file = self
             .files
@@ -1042,7 +1059,7 @@ impl FileSet {
             column: n - f.lines[line - 1] + 1,
         })
     }
-    pub fn import_pairs(&mut self, source: &FileSet, roots: &[Pair]) -> Result<Pairs, String> {
+    pub fn import_pairs(&mut self, source: &Self, roots: &[Pair]) -> Result<Pairs, String> {
         fn validate(p: &Pair, files: &FileSet) -> Result<(), String> {
             for s in p.span.iter().chain(match &p.content_span {
                 Some(ContentSpan::Pos(s)) => Some(s),
@@ -1111,8 +1128,7 @@ impl Pair {
                     && match content.unwrap() {
                         "." => n == 2,
                         "?" => n == 1,
-                        "-" => n == 1 || n == 2,
-                        "try" => n == 1 || n == 2,
+                        "-" | "try" => n == 1 || n == 2,
                         ".." => n == 0,
                         "|" | "," => n >= 1,
                         op if super::printer::is_binary(op) => n == 2,
@@ -1204,7 +1220,7 @@ impl Pair {
         Ok(())
     }
 }
-fn is_expression(p: &Pair) -> bool {
+const fn is_expression(p: &Pair) -> bool {
     !matches!(
         p.tag,
         PairTag::Comment

@@ -146,7 +146,7 @@ paren  = { "(" ~ query ~ ")" }
 array  = { "[" ~ query? ~ "]" }
 object = { "{" ~ (object_pair ~ ("," ~ object_pair)* ~ ","?)? ~ "}" }
 object_pair = { (object_key ~ (":" ~ dict_expr)?) | (var ~ (":" ~ dict_expr)?) }
-object_key  = { ident | string | ("(" ~ query ~ ")") }
+object_key  = { ident | string | (("(" ~ query ~ ")") ~ &":") }
 // DictExpr allows '|' (but not ',') between object values, per
 // parser.y's separate DictExpr production.
 dict_expr = { expr ~ ("|" ~ dict_expr)? }

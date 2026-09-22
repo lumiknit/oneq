@@ -15,7 +15,7 @@ use crate::{
 };
 use std::collections::HashMap;
 
-pub(crate) fn compile(
+pub fn compile(
     graph: &ModuleGraph,
     options: &CompileOptions,
     symbols: &mut Symbols,

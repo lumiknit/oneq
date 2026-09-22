@@ -14,39 +14,28 @@ use crate::{
     io::{Input, Output},
     render, strs,
 };
+use std::fmt::Write as _;
 use std::{
     collections::{HashSet, VecDeque},
     io::{BufReader, Read, Write},
 };
 
-fn is_name_start_char(c: char) -> bool {
+const fn is_name_start_char(c: char) -> bool {
     matches!(c, ':' | '_' | 'A'..='Z' | 'a'..='z' | '\u{c0}'..='\u{d6}' | '\u{d8}'..='\u{f6}' | '\u{f8}'..='\u{2ff}' | '\u{370}'..='\u{37d}' | '\u{37f}'..='\u{1fff}' | '\u{200c}'..='\u{200d}' | '\u{2070}'..='\u{218f}' | '\u{2c00}'..='\u{2fef}' | '\u{3001}'..='\u{d7ff}' | '\u{f900}'..='\u{fdcf}' | '\u{fdf0}'..='\u{fffd}' | '\u{10000}'..='\u{effff}')
 }
-fn is_name_char(c: char) -> bool {
+const fn is_name_char(c: char) -> bool {
     is_name_start_char(c)
         || matches!(c, '-' | '.' | '0'..='9' | '\u{b7}' | '\u{300}'..='\u{36f}' | '\u{203f}'..='\u{2040}')
 }
-fn is_xml10_char(c: char) -> bool {
+const fn is_xml10_char(c: char) -> bool {
     matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')
 }
-fn ws(c: char) -> bool {
+const fn ws(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 
-fn append(path: &[PathItem], item: PathItem) -> Vec<PathItem> {
-    let mut v = path.to_vec();
-    v.push(item);
-    v
-}
-
-/// An element currently open on the parse stack: its own `name`/
-/// `attributes` events have already been emitted, and `child_count`/
-/// `pending_text` track its still-open `children` array.
-///
-/// A frame's own path is *not* stored here - it's always exactly the
-/// parser's shared `path` stack at the point this frame is the innermost
-/// open one (see `XmlParser::path`), pushed/popped in lock-step with this
-/// frame as it's opened/closed.
+/// An open element and its pending children/text. Relative events leave
+/// its children array open until `close_children` finishes the element.
 struct Frame {
     tag: String,
     child_count: isize,
@@ -69,18 +58,13 @@ pub struct XmlParser<'a> {
     filename: String,
     stage: Stage,
     stack: Vec<Frame>,
-    /// The innermost currently-open frame's own path - `[]` whenever
-    /// `stack` is empty (before the root opens, or after it closes).
-    /// Threaded through the parsing methods as a `&mut Vec<PathItem>` so
-    /// descending into (and returning from) a child element is a
-    /// push/pop pair instead of cloning the whole path.
-    path: Vec<PathItem>,
     queue: VecDeque<StreamItem>,
     done: bool,
 }
 
 impl<'a> XmlParser<'a> {
-    pub fn new(input: Input<'a>) -> Self {
+    #[must_use]
+    pub const fn new(input: Input<'a>) -> Self {
         Self {
             input: Some(input),
             source: String::new(),
@@ -88,7 +72,6 @@ impl<'a> XmlParser<'a> {
             filename: String::new(),
             stage: Stage::Preamble,
             stack: Vec::new(),
-            path: Vec::new(),
             queue: VecDeque::new(),
             done: false,
         }
@@ -249,15 +232,15 @@ impl<'a> XmlParser<'a> {
     }
 
     /// Parses an opening tag (`<name attr="v" ...>` or self-closing
-    /// `<name attr="v" ... />`) at `path`, emitting its `name` and
+    /// `<name attr="v" ... />`), emitting its `name` and
     /// `attributes` events immediately. Returns `(tag, self_closing)`.
-    fn open_tag(&mut self, path: &[PathItem]) -> Result<(String, bool), DataError> {
+    fn open_tag(&mut self) -> Result<(String, bool), DataError> {
         self.expect("<")?;
         let tag = self.read_name()?;
-        self.queue.push_back(StreamItem {
-            path: append(path, PathItem::new_key_str("name")),
-            value: Some(Value::String(tag.clone().into())),
-        });
+        self.queue
+            .push_back(StreamItem::Push(PathItem::new_key_str("name")));
+        self.queue
+            .push_back(StreamItem::Value(Value::String(tag.clone().into())));
         let mut attrs: Vec<(String, String)> = Vec::new();
         let mut seen = HashSet::new();
         let empty;
@@ -280,56 +263,36 @@ impl<'a> XmlParser<'a> {
             }
             attrs.push((key, value));
         }
-        let attrs_path = append(path, PathItem::new_key_str("attributes"));
+        self.queue
+            .push_back(StreamItem::Push(PathItem::new_key_str("attributes")));
         if attrs.is_empty() {
-            self.queue.push_back(StreamItem {
-                path: attrs_path,
-                value: Some(Value::empty_object()),
-            });
+            self.queue
+                .push_back(StreamItem::Value(Value::empty_object()));
         } else {
-            let mut last = attrs_path.clone();
-            for (key, value) in &attrs {
-                last = append(&attrs_path, PathItem::new_key_str(key));
-                self.queue.push_back(StreamItem {
-                    path: last.clone(),
-                    value: Some(Value::String(value.clone().into())),
-                });
+            for (key, value) in attrs {
+                self.queue
+                    .push_back(StreamItem::Push(PathItem::new_key_str(&key)));
+                self.queue
+                    .push_back(StreamItem::Value(Value::String(value.into())));
             }
-            self.queue.push_back(StreamItem {
-                path: last,
-                value: None,
-            });
+            self.queue.push_back(StreamItem::Close);
         }
+        self.queue
+            .push_back(StreamItem::Push(PathItem::new_key_str("children")));
         Ok((tag, empty))
     }
 
-    /// Emits the (already-known) `children` events for an element at
-    /// `path` with `child_count` children, then the element's own closing
-    /// event - the last two events every element produces, regardless of
-    /// whether its children turned out to be empty or not.
-    fn close_children(&mut self, path: &[PathItem], child_count: isize) {
-        let children_path = append(path, PathItem::new_key_str("children"));
-        if child_count == 0 {
-            self.queue.push_back(StreamItem {
-                path: children_path.clone(),
-                value: Some(Value::empty_array()),
-            });
+    /// Finish the children array, then the element object itself.
+    fn close_children(&mut self, child_count: isize) {
+        self.queue.push_back(if child_count == 0 {
+            StreamItem::Value(Value::empty_array())
         } else {
-            let mut last = children_path.clone();
-            last.push(PathItem::new_idx(child_count - 1));
-            self.queue.push_back(StreamItem {
-                path: last,
-                value: None,
-            });
-        }
-        self.queue.push_back(StreamItem {
-            path: children_path,
-            value: None,
+            StreamItem::Close
         });
+        self.queue.push_back(StreamItem::Close);
     }
 
-    /// `path` is the frame's own path (the parser's shared path stack).
-    fn flush_pending_text(frame: &mut Frame, path: &[PathItem], queue: &mut VecDeque<StreamItem>) {
+    fn flush_pending_text(frame: &mut Frame, queue: &mut VecDeque<StreamItem>) {
         let Some(text) = frame.pending_text.take() else {
             return;
         };
@@ -338,14 +301,10 @@ impl<'a> XmlParser<'a> {
         }
         let idx = frame.child_count;
         frame.child_count += 1;
-        let mut path = append(path, PathItem::new_key_str("children"));
-        path.push(PathItem::new_idx(idx));
-        path.push(PathItem::new_key_str("text"));
-        queue.push_back(StreamItem {
-            path: path.clone(),
-            value: Some(Value::String(text.into())),
-        });
-        queue.push_back(StreamItem { path, value: None });
+        queue.push_back(StreamItem::Push(PathItem::new_idx(idx)));
+        queue.push_back(StreamItem::Push(PathItem::new_key_str("text")));
+        queue.push_back(StreamItem::Value(Value::String(text.into())));
+        queue.push_back(StreamItem::Close);
     }
 
     fn merge_text(frame: &mut Frame, text: String) {
@@ -358,12 +317,8 @@ impl<'a> XmlParser<'a> {
         });
     }
 
-    /// Processes exactly one syntactic unit (a piece of text, a comment/PI,
-    /// a child element's opening tag, or the top frame's own closing tag)
-    /// against the innermost currently-open element. `path` is the parser's
-    /// shared path stack, kept equal to the top frame's own path (or `[]`
-    /// while `stack` is empty) - see `XmlParser::path`.
-    fn step_element(&mut self, path: &mut Vec<PathItem>) -> Result<(), DataError> {
+    /// Process one text/comment/tag unit against the innermost element.
+    fn step_element(&mut self) -> Result<(), DataError> {
         if self.take("</") {
             let name = self.read_name()?;
             if name != self.stack.last().unwrap().tag {
@@ -372,11 +327,8 @@ impl<'a> XmlParser<'a> {
             self.spaces();
             self.expect(">")?;
             let mut frame = self.stack.pop().unwrap();
-            Self::flush_pending_text(&mut frame, path, &mut self.queue);
-            self.close_children(path, frame.child_count);
-            if !self.stack.is_empty() {
-                path.truncate(path.len() - 2); // pop "children", idx
-            }
+            Self::flush_pending_text(&mut frame, &mut self.queue);
+            self.close_children(frame.child_count);
             return Ok(());
         }
         if self.rest().is_empty() {
@@ -395,15 +347,14 @@ impl<'a> XmlParser<'a> {
                 return Err(self.error("XML nesting exceeds 128 levels"));
             }
             let frame = self.stack.last_mut().unwrap();
-            Self::flush_pending_text(frame, path, &mut self.queue);
+            Self::flush_pending_text(frame, &mut self.queue);
             let idx = frame.child_count;
             frame.child_count += 1;
-            path.push(PathItem::new_key_str("children"));
-            path.push(PathItem::new_idx(idx));
-            let (tag, empty) = self.open_tag(path)?;
+            self.queue
+                .push_back(StreamItem::Push(PathItem::new_idx(idx)));
+            let (tag, empty) = self.open_tag()?;
             if empty {
-                self.close_children(path, 0);
-                path.truncate(path.len() - 2); // pop "children", idx
+                self.close_children(0);
             } else {
                 self.stack.push(Frame {
                     tag,
@@ -449,12 +400,12 @@ impl<'a> XmlParser<'a> {
                                         && !standalone
                                         && value.eq_ignore_ascii_case("utf-8") =>
                                 {
-                                    encoding = true
+                                    encoding = true;
                                 }
                                 "standalone"
                                     if !standalone && matches!(value.as_str(), "yes" | "no") =>
                                 {
-                                    standalone = true
+                                    standalone = true;
                                 }
                                 _ => {
                                     return Err(self.error(
@@ -473,9 +424,9 @@ impl<'a> XmlParser<'a> {
                     if self.rest().starts_with("<!DOCTYPE") {
                         return Err(self.error("DOCTYPE and custom entities are not supported"));
                     }
-                    let (tag, empty) = self.open_tag(&[])?;
+                    let (tag, empty) = self.open_tag()?;
                     if empty {
-                        self.close_children(&[], 0);
+                        self.close_children(0);
                         self.stage = Stage::Trailing;
                     } else {
                         self.stack.push(Frame {
@@ -487,10 +438,7 @@ impl<'a> XmlParser<'a> {
                     }
                 }
                 Stage::InElement => {
-                    let mut path = std::mem::take(&mut self.path);
-                    let result = self.step_element(&mut path);
-                    self.path = path;
-                    result?;
+                    self.step_element()?;
                     if self.stack.is_empty() {
                         self.stage = Stage::Trailing;
                     }
@@ -515,7 +463,7 @@ impl<'a> XmlParser<'a> {
         }
     }
 }
-impl<'a> Iterator for XmlParser<'a> {
+impl Iterator for XmlParser<'_> {
     type Item = ParseOutput;
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -548,9 +496,9 @@ impl<'a> Iterator for XmlParser<'a> {
         }
     }
 }
-impl<'a> Parser for XmlParser<'a> {}
+impl Parser for XmlParser<'_> {}
 
-fn invalid(message: &'static str) -> DataError {
+const fn invalid(message: &'static str) -> DataError {
     DataError::UnableToSerializeValueType {
         value_type: message,
     }
@@ -575,8 +523,12 @@ fn escaped(out: &mut String, s: &str, attr: bool, ascii: bool) -> Result<(), Dat
             '>' => out.push_str("&gt;"),
             '"' if attr => out.push_str("&quot;"),
             '\r' => out.push_str("&#13;"),
-            '\n' | '\t' if attr => out.push_str(&format!("&#{};", c as u32)),
-            c if ascii && !c.is_ascii() => out.push_str(&format!("&#{};", c as u32)),
+            '\n' | '\t' if attr => {
+                let _ = write!(out, "&#{};", c as u32);
+            }
+            c if ascii && !c.is_ascii() => {
+                let _ = write!(out, "&#{};", c as u32);
+            }
             c => out.push(c),
         }
     }
@@ -655,8 +607,12 @@ pub struct XmlSerializer {
     options: render::Options,
 }
 impl XmlSerializer {
-    pub fn new(output: Output, options: render::Options) -> Self {
+    #[must_use]
+    pub const fn new(output: Output, options: render::Options) -> Self {
         Self { output, options }
+    }
+    pub(crate) fn finish(self) -> std::io::Result<()> {
+        self.output.finish()
     }
 }
 impl Serializer for XmlSerializer {

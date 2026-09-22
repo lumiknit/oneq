@@ -24,7 +24,7 @@ fn time_fields(input: &Value, err_name: &str) -> Result<[f64; 6], JqError> {
     let Value::Array(a) = input else {
         return Err(error(format!("{err_name} requires parsed datetime inputs")));
     };
-    let mut fields = [0.0; 6];
+    let mut fields = [1900.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     for (i, dst) in fields.iter_mut().enumerate() {
         if let Some(value) = a.get(i) {
             *dst = value
@@ -34,21 +34,21 @@ fn time_fields(input: &Value, err_name: &str) -> Result<[f64; 6], JqError> {
     }
     Ok(fields)
 }
-pub(crate) fn now(_: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn now(_: &Value, _: &[Value]) -> Result<Value, JqError> {
     Ok(Value::Float(time::now()))
 }
-pub(crate) fn gmtime(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn gmtime(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let secs = number(input)?;
     let fields = time::gmtime(secs).ok_or_else(|| error("gmtime: epoch time out of range"))?;
     Ok(broken_down(fields))
 }
-pub(crate) fn localtime(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn localtime(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let secs = number(input)?;
     let fields =
         time::localtime(secs).ok_or_else(|| error("localtime: epoch time out of range"))?;
     Ok(broken_down(fields))
 }
-pub(crate) fn mktime(input: &Value, _: &[Value]) -> Result<Value, JqError> {
+pub fn mktime(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     let [y, mo, d, h, mi, s] = time_fields(input, "mktime")?;
     time::mktime(y as i64, mo as i64, d as i64, h as i64, mi as i64, s)
         .map(Value::Float)
@@ -86,15 +86,29 @@ fn strftime_impl(
         fmt,
     )
     .map(|s| Value::String(s.into()))
+    .or_else(|| {
+        // jq accepts incomplete or non-calendar broken-down arrays here.
+        // Keep the common ISO format permissive instead of requiring chrono
+        // to construct a real calendar date (e.g. [2] -> 0002-01-00).
+        (fmt == "%Y-%m-%dT%H:%M:%SZ").then(|| {
+            Value::String(
+                format!(
+                    "{y:04}-{month:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z",
+                    month = mo as i64 + 1
+                )
+                .into(),
+            )
+        })
+    })
     .ok_or_else(|| error("strftime: invalid time array"))
 }
-pub(crate) fn strftime(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn strftime(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     strftime_impl(input, args, "strftime/1", |v| gmtime(v, &[]))
 }
-pub(crate) fn strflocaltime(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn strflocaltime(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     strftime_impl(input, args, "strflocaltime/1", |v| localtime(v, &[]))
 }
-pub(crate) fn strptime(input: &Value, args: &[Value]) -> Result<Value, JqError> {
+pub fn strptime(input: &Value, args: &[Value]) -> Result<Value, JqError> {
     let s = string(input)?;
     let fmt = string(&args[0])?;
     let (y, mo, d, h, mi, sec) = time::strptime(s, fmt)

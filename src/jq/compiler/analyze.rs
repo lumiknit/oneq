@@ -55,6 +55,7 @@ impl Default for Facts {
         }
     }
 }
+#[must_use]
 pub fn analyze(ir: &super::super::ir::Ir, entry: super::super::ir::ExprId) -> Facts {
     analyze_summary(ir, entry).facts
 }
@@ -62,6 +63,7 @@ pub fn analyze(ir: &super::super::ir::Ir, entry: super::super::ir::ExprId) -> Fa
 /// Conservative summary used by future fusion passes. Unknown calls and
 /// recursive functions remain non-finite and effectful, so failure to prove a
 /// property only disables an optimization.
+#[must_use]
 pub fn analyze_summary(ir: &super::super::ir::Ir, entry: super::super::ir::ExprId) -> Summary {
     let mut active = std::collections::HashSet::new();
     summarize(ir, entry, &mut active)
@@ -236,8 +238,7 @@ fn summarize(
                 ),
             ),
         ),
-        Expr::Scope { body, .. } => summarize(ir, *body, active),
-        Expr::Label { body, .. } => summarize(ir, *body, active),
+        Expr::Scope { body, .. } | Expr::Label { body, .. } => summarize(ir, *body, active),
         Expr::Break(_) => {
             let mut s = unknown();
             s.observations.may_halt = true;
@@ -248,7 +249,7 @@ fn summarize(
             for step in steps {
                 match step {
                     super::super::ir::PathStep::Index(i) => {
-                        s = combine(s, summarize(ir, *i, active))
+                        s = combine(s, summarize(ir, *i, active));
                     }
                     super::super::ir::PathStep::Slice { start, end } => {
                         if let Some(i) = start {
@@ -266,7 +267,7 @@ fn summarize(
     }
 }
 
-fn combine(mut a: Summary, b: Summary) -> Summary {
+const fn combine(mut a: Summary, b: Summary) -> Summary {
     a.facts.input = match (a.facts.input, b.facts.input) {
         (InputUse::Unknown, _) | (_, InputUse::Unknown) => InputUse::Unknown,
         (InputUse::Used, _) | (_, InputUse::Used) => InputUse::Used,

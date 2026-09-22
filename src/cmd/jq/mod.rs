@@ -2,9 +2,10 @@
 use crate::{
     cmd::flags,
     data::{self, Value},
+    io::Output,
     io::SharedInputTracker,
     jq::{
-        CompileOptions, Session,
+        CompileOptions, EntryId, Session,
         vm::{InputMode, JqError, VmEvent, host::Host},
     },
     strs::Symbol,
@@ -95,8 +96,36 @@ pub(crate) fn safe_run(args: &flags::Args) -> anyhow::Result<i32> {
         );
         return Ok(0);
     }
+    if opt.in_place {
+        anyhow::ensure!(
+            !opt.files.is_empty(),
+            "--in-place requires at least one input file"
+        );
+        for path in &opt.files {
+            let output = Output::new_inplace(path)?;
+            let source = option::RunInputSource::Files(vec![path.clone()]);
+            let status = execute_entry(&mut session, entry, &opt, Some(&source), output)?;
+            if status != 0 {
+                return Ok(status);
+            }
+        }
+        return Ok(0);
+    }
 
-    let (parser, tracker) = opt.build_parser()?;
+    execute_entry(&mut session, entry, &opt, None, Output::Stdout)
+}
+
+fn execute_entry(
+    session: &mut Session,
+    entry: EntryId,
+    opt: &RunOption,
+    source: Option<&option::RunInputSource>,
+    output: Output,
+) -> anyhow::Result<i32> {
+    let (parser, tracker) = match source {
+        Some(source) => opt.build_parser_for(source)?,
+        None => opt.build_parser()?,
+    };
     let builder = data::ValueBuilder::new(parser, opt.stream);
     let mut host = CliHost {
         inputs: data::ValueCollector::new(builder, opt.slurp),
@@ -104,24 +133,19 @@ pub(crate) fn safe_run(args: &flags::Args) -> anyhow::Result<i32> {
         module_dirs: opt.module_dirs.clone(),
         filter_path: opt.filter_path.clone(),
     };
-
     let mode = if opt.null_input {
         InputMode::Null
     } else {
         InputMode::Host
     };
-
     let mut execution = session
         .run(entry, &mut host, mode)
         .map_err(|e| anyhow::anyhow!(e.user_message()))?;
     execution.continue_after_error();
-
-    let mut serializer = opt.build_serializer()?;
+    let mut serializer = opt.build_serializer_with_output(output)?;
     loop {
         match execution.resume_mode::<false>(0) {
-            VmEvent::Output(value) => {
-                serializer.put(value)?;
-            }
+            VmEvent::Output(value) => serializer.put(value)?,
             VmEvent::Suspended => unreachable!(),
             VmEvent::Done => break,
             VmEvent::Error(JqError::Input(error)) => {
@@ -141,9 +165,8 @@ pub(crate) fn safe_run(args: &flags::Args) -> anyhow::Result<i32> {
             }
         }
     }
-
     let (failed, last) = execution.input_status();
-    Ok(if failed {
+    let status = if failed {
         5
     } else if opt.exit_status {
         match last {
@@ -153,5 +176,10 @@ pub(crate) fn safe_run(args: &flags::Args) -> anyhow::Result<i32> {
         }
     } else {
         0
-    })
+    };
+    if failed {
+        return Ok(status);
+    }
+    serializer.finish()?;
+    Ok(status)
 }

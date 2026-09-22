@@ -204,19 +204,24 @@ pub struct BuiltinOp2(pub BuiltinInstr);
 pub struct BuiltinOp3(pub BuiltinInstr);
 
 impl BuiltinInstr {
+    #[must_use]
     pub const fn op0(self) -> BuiltinOp0 {
         BuiltinOp0(self)
     }
+    #[must_use]
     pub const fn op1(self) -> BuiltinOp1 {
         BuiltinOp1(self)
     }
+    #[must_use]
     pub const fn op2(self) -> BuiltinOp2 {
         BuiltinOp2(self)
     }
+    #[must_use]
     pub const fn op3(self) -> BuiltinOp3 {
         BuiltinOp3(self)
     }
 
+    #[must_use]
     pub const fn is_infix_operator(self) -> bool {
         matches!(
             self,
@@ -234,7 +239,8 @@ impl BuiltinInstr {
         )
     }
 
-    pub fn effects(self) -> super::BuiltinEffects {
+    #[must_use]
+    pub const fn effects(self) -> super::BuiltinEffects {
         super::BuiltinEffects {
             may_empty: matches!(self, Self::Empty),
             may_stderr: matches!(self, Self::Debug | Self::Stderr),

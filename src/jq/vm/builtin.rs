@@ -1,5 +1,5 @@
 //! Direct builtin dispatch. Every arm has a statically known target;
-//! runtime execution never consults BuiltinSpec or calls through a function pointer.
+//! runtime execution never consults `BuiltinSpec` or calls through a function pointer.
 use super::{JqError, Vm, VmEvent, host::Host, value};
 use crate::{
     data::Value,
