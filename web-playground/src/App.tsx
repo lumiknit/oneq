@@ -9,6 +9,7 @@ import {
 import CLIOption from './CLIOption';
 import CodeEdit from './CodeEdit';
 import { getOutputExtension, parseAnsiSegments, parseOptions } from './options';
+import { readURLState, writeURLState } from './urlState';
 
 type WorkerMessage =
   | { type: 'output'; channel: 1 | 2; bytes: Uint8Array }
@@ -86,13 +87,6 @@ const trimPreview = (text: string, max = 80) => {
   return line.length > max ? `${line.slice(0, max)}…` : line;
 };
 
-/** Reads state from the `#/?...` fragment (falls back to legacy `?...`). */
-const readURLParams = () => {
-  if (location.hash.startsWith('#/'))
-    return new URL(location.hash.slice(1), location.origin).searchParams;
-  return new URLSearchParams(location.search);
-};
-
 const renderOutput = (parts: OutputPart[]) => {
   return parts.flatMap((part, partIndex) => {
     const segments = parseAnsiSegments(part.text);
@@ -125,32 +119,21 @@ const App: Component = () => {
   const [filter, setFilter] = createSignal(defaultFilter);
   const [stdin, setStdin] = createSignal(defaultStdin);
 
-  onMount(() => {
-    const params = readURLParams();
-
-    const pOptions = params.get('options');
-    if (pOptions) setOptions(pOptions);
-
-    const pFilter = params.get('filter');
-    if (pFilter) setFilter(pFilter);
-
-    const pStdin = params.get('stdin');
-    if (pStdin) setStdin(pStdin);
+  onMount(async () => {
+    const state = await readURLState();
+    if (state.options) setOptions(state.options);
+    if (state.filter) setFilter(state.filter);
+    if (state.stdin) setStdin(state.stdin);
+    // Run once when the page was opened from a shared `z` link.
+    if (Object.values(state).some((v) => v !== undefined)) start();
   });
 
   const setURL = () => {
-    const params = new URLSearchParams();
-
-    params.set('options', options());
-    params.set('filter', filter());
-    const s = stdin();
-    if (s.length <= 6000) {
-      params.set('stdin', stdin());
-    } else {
-      params.set('stdin', '');
-    }
-
-    history.replaceState(null, '', `${location.pathname}#/?${params}`);
+    void writeURLState({
+      options: options(),
+      filter: filter(),
+      stdin: stdin(),
+    });
   };
 
   const [output, setOutput] = createSignal<OutputPart[]>([]);
