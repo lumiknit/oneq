@@ -85,3 +85,56 @@ pub fn choice(input: &Value, _: &[Value]) -> Result<Value, JqError> {
     }
     Ok(values[next_u64().wrapping_rem(values.len() as u64) as usize].clone())
 }
+
+fn format_uuid(bits: u128) -> Value {
+    let hex = format!("{bits:032x}");
+    Value::String(
+        format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
+        )
+        .into(),
+    )
+}
+
+fn random_u128() -> u128 {
+    (u128::from(next_u64()) << 64) | u128::from(next_u64())
+}
+
+/// Sets the version nibble and the RFC 9562 variant bits.
+fn with_version(bits: u128, version: u128) -> u128 {
+    (bits & !(0xf << 76) & !(0b11 << 62)) | (version << 76) | (0b10 << 62)
+}
+
+pub fn uuidv4(_: &Value, _: &[Value]) -> Result<Value, JqError> {
+    Ok(format_uuid(with_version(random_u128(), 4)))
+}
+
+/// Last (unix_ms, rand_a) handed out, so UUIDv7s stay ordered within one
+/// millisecond (RFC 9562 §6.2, method 1 with a 12-bit counter).
+static LAST_V7: Mutex<(u64, u16)> = Mutex::new((0, 0));
+
+pub fn uuidv7(_: &Value, _: &[Value]) -> Result<Value, JqError> {
+    let now = Utc::now().timestamp_millis().max(0) as u64;
+    let (ms, counter) = {
+        let mut last = LAST_V7.lock().expect("uuidv7 mutex poisoned");
+        let next = if now > last.0 {
+            (now, (next_u64() & 0x7ff) as u16)
+        } else if last.1 < 0xfff {
+            (last.0, last.1 + 1)
+        } else {
+            // Counter exhausted: borrow the next millisecond.
+            (last.0 + 1, (next_u64() & 0x7ff) as u16)
+        };
+        *last = next;
+        next
+    };
+    let bits = (u128::from(ms & 0xffff_ffff_ffff) << 80)
+        | (u128::from(counter) << 64)
+        | u128::from(next_u64());
+    Ok(format_uuid(with_version(bits, 7)))
+}

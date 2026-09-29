@@ -181,12 +181,12 @@ code {
   align-items: center;
   gap: 0.4rem;
 }
-.format-controls select,
-.format-controls button {
+.format-controls select {
   width: auto;
   margin: 0;
-  padding: 0.15rem 0.5rem;
+  padding: 0.15rem 2rem 0.15rem 0.5rem;
   font-size: 0.8rem;
+  font-weight: normal;
 }
 
 textarea,
@@ -258,13 +258,10 @@ pre {
   display: block;
 }
 .output-actions {
-  display: flex;
-  gap: 0.35rem;
-}
-.output-actions button {
   width: auto;
+  font-weight: normal;
   margin: 0;
-  padding: 0.15rem 0.5rem;
+  padding: 0.15rem 2rem 0.15rem 0.5rem;
   font-size: 0.75rem;
 }
 .file-action {
@@ -322,4 +319,79 @@ pre {
   textarea {
     min-height: 200px;
   }
+}
+.run-history {
+  margin-top: calc(var(--pico-spacing) * 3);
+}
+.run-history h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 1rem;
+}
+.run-history h2 button {
+  width: auto;
+  margin: 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+}
+.run-history ul {
+  padding: 0;
+  margin: 0;
+}
+.run-history li {
+  list-style: none;
+  margin-bottom: 0.4rem;
+}
+.history-entry {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--pico-color);
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+}
+.history-entry:hover {
+  border-color: var(--pico-primary);
+}
+.history-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 0.2rem;
+  color: var(--pico-muted-color);
+}
+.history-io {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.1rem 0.6rem;
+}
+.history-io code,
+.history-meta code {
+  padding: 0 0.3rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.78rem;
+}
+.history-label {
+  color: var(--pico-muted-color);
+}
+.history-empty {
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+.history-index {
+  color: var(--pico-primary);
+}
+.output-more {
+  display: block;
+  width: auto;
+  margin: 0.6rem 0 0;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
 }

@@ -13,11 +13,11 @@ type CLIOptionProps = {
   disabled?: boolean;
 };
 
-/** CLI-options editor: a "Form" tab (structured, default) and a "Raw" tab
- * (free-form argv text, the previous behavior). Both tabs stay in sync
+/** CLI-options editor: a "Raw" tab (free-form argv text, default) and a
+ * "Form" tab (structured). Both tabs stay in sync
  * through `options`/`setOptions` so switching never loses input. */
 const CLIOption: Component<CLIOptionProps> = (props) => {
-  const [mode, setMode] = createSignal<'form' | 'raw'>('form');
+  const [mode, setMode] = createSignal<'form' | 'raw'>('raw');
   const [form, setForm] = createSignal<CLIFormState>(
     parseCLIFormState(props.options()),
   );
@@ -26,7 +26,6 @@ const CLIOption: Component<CLIOptionProps> = (props) => {
 
   createEffect(() => {
     let newOpt = props.options();
-    console.log('CHANGE', newOpt, oldOption);
     if (oldOption !== newOpt) {
       oldOption = newOpt;
       setForm(parseCLIFormState(newOpt));
@@ -50,17 +49,6 @@ const CLIOption: Component<CLIOptionProps> = (props) => {
         <button
           type="button"
           role="tab"
-          aria-selected={mode() === 'form'}
-          class={mode() === 'form' ? 'primary' : 'secondary'}
-          classList={{ active: mode() === 'form' }}
-          disabled={props.disabled}
-          onClick={() => switchTo('form')}
-        >
-          Form
-        </button>
-        <button
-          type="button"
-          role="tab"
           aria-selected={mode() === 'raw'}
           class={mode() === 'raw' ? 'primary' : 'secondary'}
           classList={{ active: mode() === 'raw' }}
@@ -68,6 +56,17 @@ const CLIOption: Component<CLIOptionProps> = (props) => {
           onClick={() => switchTo('raw')}
         >
           Raw
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode() === 'form'}
+          class={mode() === 'form' ? 'primary' : 'secondary'}
+          classList={{ active: mode() === 'form' }}
+          disabled={props.disabled}
+          onClick={() => switchTo('form')}
+        >
+          Form
         </button>
       </div>
       {mode() === 'form' ? (
