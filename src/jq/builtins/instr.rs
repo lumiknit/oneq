@@ -146,6 +146,8 @@ macro_rules! scalar_instructions {
             Random(0) => random::random,
             Randint2(2) => random::randint2,
             Choice(0) => random::choice,
+            Uuidv4(0) => random::uuidv4,
+            Uuidv7(0) => random::uuidv7,
             Type(0) => scalar::type_name,
             Length(0) => scalar::length,
             Now(0) => datetime::now,

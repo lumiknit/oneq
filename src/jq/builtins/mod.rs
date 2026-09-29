@@ -216,6 +216,22 @@ pub const fn registry() -> &'static [BuiltinSpec] {
             calc: None,
             docs: "Return one random element from the input array.",
         },
+        BuiltinSpec {
+            name: "uuidv4",
+            params: &[],
+            facts: RANDOM_FACTS,
+            instr: BuiltinInstr::Uuidv4,
+            calc: None,
+            docs: "Return a random UUID (version 4) string.",
+        },
+        BuiltinSpec {
+            name: "uuidv7",
+            params: &[],
+            facts: RANDOM_FACTS,
+            instr: BuiltinInstr::Uuidv7,
+            calc: None,
+            docs: "Return a time-ordered UUID (version 7) string.",
+        },
         scalar_spec!(
             "_match_impl",
             [ParamMode::Value, ParamMode::Value, ParamMode::Value],
